@@ -1,0 +1,216 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ─── Core Models ─────────────────────────────────────
+
+model Document {
+  id              String           @id @default(uuid())
+  tenantId        String           @map("tenant_id")
+  fileHash        String           @map("file_hash")
+  originalName    String           @map("original_name")
+  storagePath     String           @map("storage_path")
+  mimeType        String           @map("mime_type")
+  fileSize        Int              @map("file_size")
+  pageCount       Int?             @map("page_count")
+  status          DocumentStatus   @default(QUEUED)
+  stage           ProcessingStage  @default(INGESTED)
+
+  // Classification
+  isScanned       Boolean?         @map("is_scanned")
+  documentType    DocumentType?    @map("document_type")
+  layoutType      String?          @map("layout_type")
+  sourceLanguage  String?          @default("ja") @map("source_language")
+
+  // Canonical Data (JSON columns)
+  rawExtraction   Json?            @map("raw_extraction")
+  normalizedData  Json?            @map("normalized_data")
+  translatedData  Json?            @map("translated_data")
+  canonicalJson   Json?            @map("canonical_json")
+  frontendJson    Json?            @map("frontend_json")
+
+  // Quality
+  overallConfidence Float?         @map("overall_confidence")
+  validationErrors  Json?          @map("validation_errors")
+  qualityFlags      String[]       @map("quality_flags")
+
+  // Metadata
+  processingStarted DateTime?      @map("processing_started")
+  processingEnded   DateTime?      @map("processing_ended")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  // Pipeline versioning
+  pipelineVersion        String?  @map("pipeline_version")
+  extractionEngineVersion String? @map("extraction_engine_version")
+
+  // Relations
+  lineItems       LineItem[]
+  extractions     Extraction[]
+  auditLogs       AuditLog[]
+  reviewActions   ReviewAction[]
+  documentGroups  DocumentGroup[]
+
+  @@map("documents")
+  @@index([tenantId])
+  @@index([status])
+  @@index([fileHash])
+}
+
+model LineItem {
+  id                  String   @id @default(uuid())
+  documentId          String   @map("document_id")
+  lineNumber          Int      @map("line_number")
+
+  // Original
+  originalDescription String   @map("original_description")
+  // Translated
+  englishDescription  String?  @map("english_description")
+
+  quantity            Float?
+  unit                String?
+  unitPrice           Float?   @map("unit_price")
+  subtotal            Float?
+  confidence          Float?
+
+  // Provenance
+  sourcePage          Int?     @map("source_page")
+  sourceBbox          Json?    @map("source_bbox")
+  rawText             String?  @map("raw_text")
+  extractionMethod    String?  @map("extraction_method")
+
+  document            Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("line_items")
+  @@index([documentId])
+}
+
+model Extraction {
+  id              String   @id @default(uuid())
+  documentId      String   @map("document_id")
+  page            Int
+  extractionType  String   @map("extraction_type") // "text", "ocr", "table"
+  content         String
+  confidence      Float?
+  bbox            Json?
+  metadata        Json?
+
+  document        Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("extractions")
+  @@index([documentId])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  documentId  String   @map("document_id")
+  action      String   // "uploaded", "classified", "extracted", "translated", "validated", "approved", "rejected", "reprocessed"
+  stage       String?
+  actor       String?  // user or "system"
+  details     Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("audit_logs")
+  @@index([documentId])
+  @@index([createdAt])
+}
+
+model ReviewAction {
+  id          String   @id @default(uuid())
+  documentId  String   @map("document_id")
+  reviewer    String
+  action      String   // "approve", "reject", "correct", "reprocess"
+  corrections Json?    // field-level corrections
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("review_actions")
+  @@index([documentId])
+}
+
+// ─── Document Groups (multi-doc segmentation) ────────
+
+model DocumentGroup {
+  id            String   @id @default(uuid())
+  documentId    String   @map("document_id")
+  groupIndex    Int      @map("group_index")
+  groupType     String   @map("group_type")
+  pageStart     Int      @map("page_start")
+  pageEnd       Int      @map("page_end")
+  identifiers   Json?
+  confidence    Float?
+  canonicalJson Json?    @map("canonical_json")
+  signals       Json?    // segmentation signals for debugging
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("document_groups")
+  @@index([documentId])
+}
+
+// ─── Glossary / Translation Dictionary ───────────────
+
+model GlossaryEntry {
+  id          String   @id @default(uuid())
+  tenantId    String?  @map("tenant_id") // null = global
+  category    String   // "vendor", "product", "unit", "currency", "procurement"
+  japanese    String
+  english     String
+  priority    Int      @default(0)       // higher = preferred
+  isLocked    Boolean  @default(false)   @map("is_locked") // prevent AI override
+  createdAt   DateTime @default(now())   @map("created_at")
+  updatedAt   DateTime @updatedAt        @map("updated_at")
+
+  @@unique([tenantId, category, japanese])
+  @@map("glossary_entries")
+  @@index([category])
+  @@index([japanese])
+}
+
+// ─── Enums ───────────────────────────────────────────
+
+enum DocumentStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  NEEDS_REVIEW
+  APPROVED
+  REJECTED
+  FAILED
+}
+
+enum ProcessingStage {
+  INGESTED
+  CLASSIFIED
+  EXTRACTED
+  UNDERSTOOD
+  SEGMENTED
+  TRANSLATED
+  NORMALIZED
+  VALIDATED
+  QUALITY_CHECKED
+  STORED
+  EXPOSED
+}
+
+enum DocumentType {
+  INVOICE
+  PURCHASE_ORDER
+  PURCHASE
+  BILLING
+  RECEIPT
+  PACKING_LIST
+  AUCTION_SHEET
+  MIXED
+  UNKNOWN
+}

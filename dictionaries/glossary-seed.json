@@ -1,0 +1,40 @@
+[
+  { "category": "vendor", "japanese": "株式会社サンプル", "english": "Sample Co., Ltd.", "priority": 5 },
+  { "category": "vendor", "japanese": "東京電子", "english": "Tokyo Electronics", "priority": 5 },
+  { "category": "vendor", "japanese": "大阪機械", "english": "Osaka Machinery", "priority": 5 },
+  { "category": "vendor", "japanese": "日本工業", "english": "Nippon Industries", "priority": 5 },
+
+  { "category": "unit", "japanese": "個", "english": "pcs", "priority": 10, "isLocked": true },
+  { "category": "unit", "japanese": "本", "english": "pcs", "priority": 10, "isLocked": true },
+  { "category": "unit", "japanese": "枚", "english": "pcs", "priority": 10, "isLocked": true },
+  { "category": "unit", "japanese": "セット", "english": "set", "priority": 10, "isLocked": true },
+  { "category": "unit", "japanese": "箱", "english": "box", "priority": 10, "isLocked": true },
+  { "category": "unit", "japanese": "台", "english": "unit", "priority": 10, "isLocked": true },
+  { "category": "unit", "japanese": "巻", "english": "roll", "priority": 10, "isLocked": true },
+
+  { "category": "currency", "japanese": "円", "english": "JPY", "priority": 10, "isLocked": true },
+  { "category": "currency", "japanese": "ドル", "english": "USD", "priority": 10, "isLocked": true },
+  { "category": "currency", "japanese": "ユーロ", "english": "EUR", "priority": 10, "isLocked": true },
+
+  { "category": "procurement", "japanese": "請求書", "english": "Invoice", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "注文書", "english": "Purchase Order", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "領収書", "english": "Receipt", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "納品書", "english": "Packing List", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "見積書", "english": "Quotation", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "合計", "english": "Total", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "小計", "english": "Subtotal", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "消費税", "english": "Consumption Tax", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "税込", "english": "Tax Included", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "税抜", "english": "Tax Excluded", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "数量", "english": "Quantity", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "単価", "english": "Unit Price", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "品名", "english": "Product Name", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "金額", "english": "Amount", "priority": 10, "isLocked": true },
+  { "category": "procurement", "japanese": "備考", "english": "Remarks", "priority": 10, "isLocked": true },
+
+  { "category": "product", "japanese": "工業用ボルト M10", "english": "Industrial bolt M10", "priority": 5 },
+  { "category": "product", "japanese": "ステンレス鋼板", "english": "Stainless steel plate", "priority": 5 },
+  { "category": "product", "japanese": "電子部品", "english": "Electronic components", "priority": 5 },
+  { "category": "product", "japanese": "配線ケーブル", "english": "Wiring cable", "priority": 5 },
+  { "category": "product", "japanese": "潤滑油", "english": "Lubricating oil", "priority": 5 }
+]

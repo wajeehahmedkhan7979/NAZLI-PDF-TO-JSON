@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: pdf-pipeline
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U user -d pdf-pipeline']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  marker-sidecar:
+    build:
+      context: ./marker-sidecar
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - '8001:8001'
+    environment:
+      MARKER_PORT: '8001'
+      MARKER_HOST: '0.0.0.0'
+      TORCH_DEVICE: '${TORCH_DEVICE:-cpu}'
+    volumes:
+      - marker-cache:/root/.cache
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 120s  # Models take time to load on first request
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+
+volumes:
+  pgdata:
+  redisdata:
+  marker-cache:

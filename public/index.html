@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nazli PDF Ingestion Pipeline</title>
+    <meta name="description" content="Process Japanese Purchase PDFs seamlessly.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <div class="logo">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                <span>Nazli Pipeline</span>
+            </div>
+            <h1>Japanese Document Ingestion</h1>
+            <p>Upload official Japanese PDFs for deterministic extraction.</p>
+        </header>
+
+        <main class="content-split">
+            <!-- Upload Column -->
+            <section class="upload-section glass-panel">
+                <div class="preset-files">
+                    <h3>Try Provided Samples:</h3>
+                    <div class="button-group">
+                        <button id="load-sample-1" class="btn-secondary">Upload <code>japanise-offitial.pdf</code></button>
+                        <button id="load-sample-2" class="btn-secondary">Upload <code>japanise2offitial.pdf</code></button>
+                    </div>
+                </div>
+                
+                <div class="divider"><span>OR</span></div>
+
+                <div class="drop-zone" id="drop-zone">
+                    <input type="file" id="file-input" accept="application/pdf" hidden />
+                    <div class="icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    </div>
+                    <h3>Drag & Drop</h3>
+                    <p>your PDF document here or <span>browse</span></p>
+                </div>
+
+                <div id="status-container" class="status-container hidden">
+                    <div class="status-header">
+                        <span id="current-filename">document.pdf</span>
+                        <span id="current-badge" class="badge badge-pending">Queued</span>
+                    </div>
+                    <div class="progress-track">
+                        <div id="progress-bar" class="progress-fill"></div>
+                    </div>
+                    <div class="status-logs" id="status-logs">
+                        <!-- Logs appended here -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Results Column -->
+            <section class="results-section glass-panel">
+                <div class="results-header">
+                    <h2>Extracted Data</h2>
+                    <span class="pulse-indicator hidden" id="processing-pulse">Processing...</span>
+                </div>
+                <div class="results-body">
+                    <pre id="json-viewer">{"message": "Upload a document to see the extracted results."}</pre>
+                    <div id="table-viewer" class="hidden">
+                        <table class="auction-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Lot</th>
+                                    <th>Car Name</th>
+                                    <th>Chassis</th>
+                                    <th>Platform</th>
+                                    <th>Location</th>
+                                    <th class="text-right">Bid Price (¥)</th>
+                                    <th class="text-right">Fee (¥)</th>
+                                    <th class="text-right">Total Price (¥)</th>
+                                    <th>Score</th>
+                                    <th>Flags</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="main.js"></script>
+</body>
+</html>
