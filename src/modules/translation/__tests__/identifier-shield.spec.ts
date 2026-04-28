@@ -53,7 +53,7 @@ describe('IdentifierShield', () => {
       expect(result.shieldedText).not.toContain('KSP210-0116561');
       expect(result.shieldedText).not.toContain('JN1TANS61Z0123456');
       // Sentinels should not overlap
-      const sentinelMatches = result.shieldedText.match(/__[A-Z_]+_\d+__/g) || [];
+      const sentinelMatches = result.shieldedText.match(/__ID_[a-f0-9]+_[a-z_]+__/g) || [];
       expect(new Set(sentinelMatches).size).toBe(sentinelMatches.length);
     });
 
@@ -88,7 +88,7 @@ describe('IdentifierShield', () => {
       expect(restored).toContain('KSP210-0116561');
       expect(restored).toContain('2024-03-15');
       // Sentinels must be gone
-      expect(restored).not.toMatch(/__[A-Z_]+_\d+__/);
+      expect(restored).not.toMatch(/__ID_[a-f0-9]+_[a-z_]+__/);
     });
 
     it('handles missing tokens gracefully', () => {

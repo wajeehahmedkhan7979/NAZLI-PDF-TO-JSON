@@ -139,8 +139,19 @@ export interface FieldCandidate {
   sourceBlockId: string;
   /** Page number */
   page: number;
-  /** Confidence in this candidate */
+  /** Overall confidence in this candidate (weighted composite) */
   confidence: number;
+  /** Decomposed confidence scores for explainability */
+  confidenceBreakdown?: {
+    /** How well the nearby label matches expected labels (0-1) */
+    labelMatch: number;
+    /** Whether the block is in the expected section (0-1) */
+    sectionAlignment: number;
+    /** Spatial consistency with expected field position (0-1) */
+    spatialConsistency: number;
+    /** How well the value format matches the expected pattern (0-1) */
+    valueFormat: number;
+  };
   /** Contextual information for ranking */
   context: {
     /** Which section the block is in */

@@ -4,6 +4,7 @@ import {
   KeyValuePair,
   FieldCandidate,
   FieldType,
+  SectionType,
 } from '../interfaces/understanding.interfaces';
 
 /**
@@ -182,6 +183,7 @@ export class FieldCandidateBuilder {
   ): FieldCandidate[] {
     const candidates: FieldCandidate[] = [];
     const sourceBlock = blocks.find((b) => b.blockId === kv.sourceBlockId);
+    const section = sourceBlock?.sectionType || 'UNKNOWN';
 
     for (const rule of this.FIELD_PATTERNS) {
       // Check if the KV label matches this field's label hints
@@ -192,19 +194,30 @@ export class FieldCandidateBuilder {
 
       // Check if value matches the pattern (if patterns exist)
       let patternMatch = rule.patterns.length === 0; // No patterns = always match on label
+      let valueFormatScore = rule.patterns.length === 0 ? 0.5 : 0;
       for (const pattern of rule.patterns) {
         if (pattern.test(kv.value.trim())) {
           patternMatch = true;
+          valueFormatScore = 1.0;
           break;
         }
       }
 
       if (!patternMatch) continue;
 
-      // Boost confidence based on KV detection confidence
-      const confidence = Math.min(
-        0.98,
-        rule.confidence * 0.6 + kv.confidence * 0.4,
+      // Decomposed confidence
+      const labelMatchScore = kv.confidence > 0.8 ? 1.0 : kv.confidence;
+      const sectionAlignmentScore = this.sectionAlignment(rule.fieldType, section);
+      const spatialConsistencyScore = kv.detectionMethod === 'label_colon_value' ? 0.95 :
+        kv.detectionMethod === 'label_left_value' ? 0.85 :
+        kv.detectionMethod === 'label_above_value' ? 0.75 : 0.6;
+
+      // Weighted composite
+      const confidence = Math.min(0.98,
+        labelMatchScore * 0.30 +
+        sectionAlignmentScore * 0.25 +
+        spatialConsistencyScore * 0.15 +
+        valueFormatScore * 0.30
       );
 
       candidates.push({
@@ -213,8 +226,14 @@ export class FieldCandidateBuilder {
         sourceBlockId: kv.sourceBlockId,
         page: kv.page,
         confidence,
+        confidenceBreakdown: {
+          labelMatch: parseFloat(labelMatchScore.toFixed(3)),
+          sectionAlignment: parseFloat(sectionAlignmentScore.toFixed(3)),
+          spatialConsistency: parseFloat(spatialConsistencyScore.toFixed(3)),
+          valueFormat: parseFloat(valueFormatScore.toFixed(3)),
+        },
         context: {
-          section: sourceBlock?.sectionType || 'UNKNOWN',
+          section,
           nearbyLabels: [kv.label],
           kvPair: kv,
         },
@@ -238,8 +257,19 @@ export class FieldCandidateBuilder {
         const match = text.match(pattern);
         if (!match) continue;
 
-        // Reduce confidence for pattern-only matches (no label context)
-        const confidence = rule.confidence * 0.7;
+        // Decomposed confidence for pattern-only matches
+        const labelMatchScore = 0.0; // No label context
+        const sectionAlignmentScore = this.sectionAlignment(rule.fieldType, block.sectionType);
+        const spatialConsistencyScore = 0.5; // Unknown without KV pair
+        const valueFormatScore = 1.0; // Pattern matched fully
+
+        // Pattern-only matches get lower weight on label (it's absent)
+        const confidence = Math.min(0.85,
+          labelMatchScore * 0.10 +
+          sectionAlignmentScore * 0.35 +
+          spatialConsistencyScore * 0.15 +
+          valueFormatScore * 0.40
+        );
 
         candidates.push({
           fieldType: rule.fieldType,
@@ -247,6 +277,12 @@ export class FieldCandidateBuilder {
           sourceBlockId: block.blockId,
           page: block.page,
           confidence,
+          confidenceBreakdown: {
+            labelMatch: 0,
+            sectionAlignment: parseFloat(sectionAlignmentScore.toFixed(3)),
+            spatialConsistency: 0.5,
+            valueFormat: 1.0,
+          },
           context: {
             section: block.sectionType,
             nearbyLabels: [],
@@ -283,5 +319,38 @@ export class FieldCandidateBuilder {
     });
 
     return result;
+  }
+
+  /**
+   * Score how well a field type aligns with the section it was found in.
+   * A TOTAL in TOTALS section scores 1.0; a TOTAL in HEADER scores 0.2.
+   */
+  private sectionAlignment(fieldType: FieldType, section: SectionType | string): number {
+    const expected: Record<string, string[]> = {
+      VIN: ['VEHICLE_INFO', 'HEADER'],
+      CHASSIS: ['VEHICLE_INFO', 'HEADER'],
+      TOTAL: ['TOTALS'],
+      SUBTOTAL: ['TOTALS', 'LINE_ITEMS'],
+      TAX: ['TOTALS'],
+      DATE: ['HEADER', 'FOOTER'],
+      INVOICE_NUMBER: ['HEADER'],
+      VENDOR: ['HEADER', 'PARTIES'],
+      CLIENT: ['HEADER', 'PARTIES'],
+      VEHICLE_NAME: ['VEHICLE_INFO', 'LINE_ITEMS'],
+      MODEL_CODE: ['VEHICLE_INFO'],
+      CURRENCY_AMOUNT: ['LINE_ITEMS', 'TOTALS'],
+      LOT_NUMBER: ['HEADER'],
+      AUCTION_FEE: ['TOTALS', 'LINE_ITEMS'],
+      RECYCLE_FEE: ['TOTALS', 'LINE_ITEMS'],
+      BANK_ACCOUNT: ['FOOTER', 'NOTES'],
+      PHONE: ['HEADER', 'FOOTER'],
+      POSTAL_CODE: ['HEADER', 'FOOTER'],
+    };
+
+    const sections = expected[fieldType];
+    if (!sections) return 0.5; // Unknown field type
+    if (section === 'UNKNOWN') return 0.4; // Can't tell
+    if (sections.includes(section as string)) return 1.0; // Perfect match
+    return 0.2; // Wrong section
   }
 }

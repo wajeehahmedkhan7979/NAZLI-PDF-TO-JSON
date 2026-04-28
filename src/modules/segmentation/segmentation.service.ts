@@ -42,8 +42,14 @@ export class SegmentationService {
     pageDensityChange: 0.10,
   };
 
-  /** Threshold for splitting into a new group */
-  private readonly BOUNDARY_THRESHOLD = 0.55;
+  /** Base threshold for splitting into a new group */
+  private readonly BASE_THRESHOLD = 0.55;
+  /** Type-specific threshold adjustments */
+  private readonly THRESHOLD_ADJUSTMENTS: Record<string, number> = {
+    BILLING: 0.10,       // stricter (fewer false splits)
+    PURCHASE: 0.05,
+    AUCTION_SHEET: -0.10, // looser (auction sheets vary more)
+  };
 
   /**
    * Segment understood blocks into logical document groups.
@@ -258,7 +264,10 @@ export class SegmentationService {
         });
       }
 
-      if (weightedScore >= this.BOUNDARY_THRESHOLD) {
+      // Dynamic threshold: base + variance factor + type adjustment
+      const threshold = this.computeDynamicThreshold(signals, profiles);
+
+      if (weightedScore >= threshold) {
         boundaries.push({ page: i, score: weightedScore, signals });
       }
     }
@@ -431,6 +440,49 @@ export class SegmentationService {
       dist[key] /= total;
     }
     return dist;
+  }
+
+  /**
+   * Compute a dynamic segmentation threshold based on:
+   * 1. Signal variance (high variance = more uncertainty = stricter threshold)
+   * 2. Detected document type (billing = stricter, auction = looser)
+   *
+   * Formula: clamp(base + variance_factor + type_adjustment, 0.35, 0.85)
+   */
+  private computeDynamicThreshold(
+    signals: GroupingSignal[],
+    profiles: PageProfile[],
+  ): number {
+    let threshold = this.BASE_THRESHOLD;
+
+    // Variance factor: if signals are inconsistent, be more cautious (raise threshold)
+    if (signals.length > 0) {
+      const strengths = signals.map((s) => s.strength);
+      const mean = strengths.reduce((a, b) => a + b, 0) / strengths.length;
+      const variance = strengths.reduce((a, s) => a + Math.pow(s - mean, 2), 0) / strengths.length;
+      const stddev = Math.sqrt(variance);
+      threshold += stddev * 0.1; // Higher variance → higher bar to split
+    }
+
+    // Type-based adjustment: detect dominant doc type from profiles
+    const allHeaderText = profiles.map((p) => p.headerText).join(' ');
+    for (const [type, adj] of Object.entries(this.THRESHOLD_ADJUSTMENTS)) {
+      if (type === 'BILLING' && (allHeaderText.includes('請求書') || allHeaderText.includes('納品書'))) {
+        threshold += adj;
+        break;
+      }
+      if (type === 'AUCTION_SHEET' && (allHeaderText.includes('オークション') || allHeaderText.includes('TC-web'))) {
+        threshold += adj;
+        break;
+      }
+      if (type === 'PURCHASE' && allHeaderText.includes('注文書')) {
+        threshold += adj;
+        break;
+      }
+    }
+
+    // Clamp to safe range
+    return Math.max(0.35, Math.min(0.85, threshold));
   }
 }
 

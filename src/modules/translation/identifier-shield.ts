@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 
 /**
  * IdentifierShield — protects identifiers from being mangled by translation.
@@ -106,10 +107,9 @@ export class IdentifierShield {
         // Skip if this range overlaps with an already-shielded region
         if (this.overlapsShielded(start, end, shieldedRanges)) continue;
 
-        // Generate sentinel token
-        const count = counters[name] || 0;
-        counters[name] = count + 1;
-        const sentinel = `__${name}_${count}__`;
+        // Generate UUID-based sentinel token (prevents collision with translation output)
+        const uid = randomBytes(4).toString('hex');
+        const sentinel = `__ID_${uid}_${name.toLowerCase()}__`;
 
         tokens.set(sentinel, original);
         identifiedItems.push({

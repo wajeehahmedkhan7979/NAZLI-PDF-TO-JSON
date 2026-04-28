@@ -266,6 +266,11 @@ export class BlockNormalizer {
 
   /**
    * Determine if two blocks should be merged (same logical line).
+   *
+   * Semantic guards:
+   * - NEVER merge if either block contains an identifier (VIN, chassis, currency, date)
+   * - NEVER merge across different sectionType
+   * - Max merged width: 800px, max height: 50px
    */
   private shouldMerge(a: UnderstoodBlock, b: UnderstoodBlock): boolean {
     if (a.page !== b.page) return false;
@@ -285,7 +290,39 @@ export class BlockNormalizer {
     const textTypes = ['Text', 'Span', 'Line'];
     if (!textTypes.includes(a.blockType) || !textTypes.includes(b.blockType)) return false;
 
+    // SEMANTIC GUARD: never merge across different sections
+    if (a.sectionType !== 'UNKNOWN' && b.sectionType !== 'UNKNOWN' &&
+        a.sectionType !== b.sectionType) return false;
+
+    // SEMANTIC GUARD: never merge if either block contains identifiers
+    if (this.containsIdentifier(a.normalizedText) || this.containsIdentifier(b.normalizedText)) {
+      return false;
+    }
+
+    // SEMANTIC GUARD: max merged dimensions (prevent runaway merging)
+    const mergedWidth = Math.max(a.bbox[2], b.bbox[2]) - Math.min(a.bbox[0], b.bbox[0]);
+    const mergedHeight = Math.max(a.bbox[3], b.bbox[3]) - Math.min(a.bbox[1], b.bbox[1]);
+    if (mergedWidth > 800 || mergedHeight > 50) return false;
+
     return true;
+  }
+
+  /**
+   * Check if text contains an identifier that should not be merged.
+   * VINs, chassis numbers, dates, currency amounts, phone numbers.
+   */
+  private containsIdentifier(text: string): boolean {
+    if (!text) return false;
+    const identifierPatterns = [
+      /[A-HJ-NPR-Z0-9]{17}/,              // VIN
+      /[A-Z][A-Z0-9]{2,}-\d{4,}/,          // Chassis number
+      /[\u00a5\uffe5]\s?[\d,]{3,}/,                  // Currency (\u00a5 or \uffe5)
+      /\d{4}[-\/]\d{1,2}[-\/]\d{1,2}/,     // ISO date
+      /(\u4ee4\u548c|\u5e73\u6210|\u662d\u548c)\d+\u5e74/,            // Era date
+      /\b0\d{1,4}-\d{3,4}-\d{3,4}\b/,      // Phone number
+      /\u3012\d{3}-\d{4}/,                       // Postal code
+    ];
+    return identifierPatterns.some((p) => p.test(text));
   }
 
   /**

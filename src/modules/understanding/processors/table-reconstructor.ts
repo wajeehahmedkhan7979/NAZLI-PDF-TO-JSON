@@ -17,6 +17,11 @@ import {
 export class TableReconstructor {
   private readonly logger = new Logger(TableReconstructor.name);
 
+  /** Clustering tolerances (pixels) — configurable for different doc types */
+  private readonly ROW_CLUSTER_TOLERANCE = 8;
+  private readonly COL_CLUSTER_TOLERANCE = 15;
+  private readonly MIN_CELLS_PER_ROW = 2;
+
   /**
    * Find and reconstruct tables from the block list.
    */
@@ -151,6 +156,38 @@ export class TableReconstructor {
   private detectGrid(cells: TableCell[]): { rows: TableRow[]; columns: number } {
     if (cells.length === 0) return { rows: [], columns: 0 };
 
+    // If cells have bbox, use Y-coordinate clustering for rows
+    const hasBbox = cells.some((c) => c.bbox && c.bbox.length >= 4);
+
+    if (hasBbox) {
+      // Cluster by Y-center for row detection
+      const yCenters = cells.map((c) => {
+        if (c.bbox && c.bbox.length >= 4) return (c.bbox[1] + c.bbox[3]) / 2;
+        return c.rowIndex * 100; // fallback
+      });
+      const rowClusters = this.clusterValues(yCenters, this.ROW_CLUSTER_TOLERANCE);
+
+      // Assign row indices based on clusters
+      for (const [clusterIdx, memberIndices] of rowClusters.entries()) {
+        for (const memberIdx of memberIndices) {
+          cells[memberIdx].rowIndex = clusterIdx;
+        }
+      }
+
+      // Cluster by X-left for column detection
+      const xLefts = cells.map((c) => {
+        if (c.bbox && c.bbox.length >= 4) return c.bbox[0];
+        return c.columnIndex * 100;
+      });
+      const colClusters = this.clusterValues(xLefts, this.COL_CLUSTER_TOLERANCE);
+
+      for (const [clusterIdx, memberIndices] of colClusters.entries()) {
+        for (const memberIdx of memberIndices) {
+          cells[memberIdx].columnIndex = clusterIdx;
+        }
+      }
+    }
+
     // Group by row index
     const rowMap = new Map<number, TableCell[]>();
     for (const cell of cells) {
@@ -158,21 +195,25 @@ export class TableReconstructor {
       rowMap.get(cell.rowIndex)!.push(cell);
     }
 
-    // Sort rows and build TableRow objects
+    // Sort rows and build TableRow objects, filtering out rows with too few cells
     const sortedRowIndices = Array.from(rowMap.keys()).sort((a, b) => a - b);
-    const maxColumns = Math.max(...Array.from(rowMap.values()).map((r) => r.length));
+    const maxColumns = Math.max(...Array.from(rowMap.values()).map((r) => r.length), 0);
 
-    const rows: TableRow[] = sortedRowIndices.map((rowIdx, i) => {
-      const rowCells = rowMap.get(rowIdx)!;
-      // Sort cells by column index
-      rowCells.sort((a, b) => a.columnIndex - b.columnIndex);
-
-      return {
-        rowIndex: i,
-        cells: rowCells,
-        isMultiLine: false,
-      };
-    });
+    const rows: TableRow[] = sortedRowIndices
+      .filter((rowIdx) => {
+        const rowCells = rowMap.get(rowIdx)!;
+        // Skip rows with fewer cells than threshold (likely floating/noise)
+        return rowCells.length >= this.MIN_CELLS_PER_ROW || rowCells.length >= maxColumns * 0.5;
+      })
+      .map((rowIdx, i) => {
+        const rowCells = rowMap.get(rowIdx)!;
+        rowCells.sort((a, b) => a.columnIndex - b.columnIndex);
+        return {
+          rowIndex: i,
+          cells: rowCells,
+          isMultiLine: false,
+        };
+      });
 
     return { rows, columns: maxColumns };
   }
