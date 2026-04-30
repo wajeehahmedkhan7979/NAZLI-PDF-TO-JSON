@@ -18,9 +18,11 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "prisma:generate": "prisma generate",
-    "prisma:push": "prisma db push",
-    "prisma:studio": "prisma studio"
+    "parse": "ts-node src/scripts/parse-pdf.ts",
+    "evaluate": "ts-node src/scripts/evaluate-regression.ts",
+    "prisma:generate": "prisma generate --schema=src/database/prisma/schema.prisma",
+    "prisma:push": "prisma db push --schema=src/database/prisma/schema.prisma",
+    "prisma:studio": "prisma studio --schema=src/database/prisma/schema.prisma"
   },
   "dependencies": {
     "@nestjs/bull": "^10.1.0",

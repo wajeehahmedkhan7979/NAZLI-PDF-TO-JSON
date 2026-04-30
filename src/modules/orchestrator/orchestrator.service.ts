@@ -1,67 +1,36 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { ClassifierService } from '../classifier/classifier.service';
-import { ExtractionService } from '../extraction/extraction.service';
-import { UnderstandingService } from '../understanding/understanding.service';
-import { SegmentationService } from '../segmentation/segmentation.service';
-import { BlockTranslator, TranslationContext } from '../translation/block-translator';
-import { SchemaMapperService } from '../schema-mapper/schema-mapper.service';
-import { ConfidenceCalculator } from '../validation/confidence-calculator';
-import { PurchaseValidator } from '../validation/validators/purchase.validator';
-import { QualityGateService } from '../validation/quality-gate.service';
-import { PipelineMetrics } from '../../common/metrics/pipeline-metrics';
-import { ErpAdapterService } from '../schema-mapper/erp-adapter.service';
+import { AuctionSheetProcessor } from '../auction/auction-sheet.processor';
 
 const prisma = new PrismaClient();
 
 /**
- * OrchestratorService v2 — drives a document through the corrected pipeline:
+ * OrchestratorService v3 — Simplified linear flow for purchase extraction.
  *
- *   INGEST → CLASSIFY → EXTRACT → UNDERSTAND → SEGMENT
- *          → TRANSLATE → NORMALIZE → VALIDATE → EXPORT
- *
- * Strategy Pattern:
- * - AUCTION_SHEET: fast-path to AuctionSheetProcessor (preserves existing logic)
- * - PURCHASE / BILLING / INVOICE: full pipeline with Understanding Layer
- *
- * Resilience:
- * - Idempotent state machine (picks up from current stage)
- * - Block-level failure isolation
- * - Group-level isolation for multi-document PDFs
- * - Retry from any stage
+ * Pipeline:
+ *   INGEST → CLASSIFY → PROCESS (Purchase/Auction) → EXPOSE
  */
 @Injectable()
 export class OrchestratorService {
   private readonly logger = new Logger(OrchestratorService.name);
-
-  /** Pipeline version for idempotency and tracing */
-  private readonly PIPELINE_VERSION = '2.0.0';
+  private readonly PIPELINE_VERSION = '3.0.0';
 
   constructor(
     private classifier: ClassifierService,
-    private extraction: ExtractionService,
-    private understanding: UnderstandingService,
-    private segmentation: SegmentationService,
-    private blockTranslator: BlockTranslator,
-    private schemaMapper: SchemaMapperService,
-    private confidenceCalc: ConfidenceCalculator,
-    private purchaseValidator: PurchaseValidator,
-    private qualityGate: QualityGateService,
-    private metrics: PipelineMetrics,
-    private erpAdapter: ErpAdapterService,
+    private auctionProcessor: AuctionSheetProcessor,
   ) {}
 
   /**
-   * Run the full pipeline for one document. Idempotent — picks up from
-   * wherever the document currently sits in the stage sequence.
+   * Run the simplified pipeline for one document.
    */
   async runPipeline(documentId: string): Promise<void> {
-    this.logger.log(`▶ Pipeline v${this.PIPELINE_VERSION} started for ${documentId}`);
+    this.logger.log(`▶ Simplified Purchase Pipeline v${this.PIPELINE_VERSION} started for ${documentId}`);
 
     const doc = await prisma.document.findUnique({ where: { id: documentId } });
     if (!doc) throw new Error(`Document ${documentId} not found`);
 
-    // Mark processing + pipeline version
+    // Mark processing
     await prisma.document.update({
       where: { id: documentId },
       data: {
@@ -71,288 +40,30 @@ export class OrchestratorService {
       },
     });
 
-    const timing: Record<string, number> = {};
-
     try {
-      const stage = doc.stage;
-
       // ── STEP 1: Classification ─────────────────────────
-      if (this.shouldRun(stage, 'CLASSIFIED')) {
-        const t = Date.now();
-        this.logger.debug(`[${documentId}] → CLASSIFY`);
-        await this.classifier.classifyDocument(documentId);
-        timing.classify_ms = Date.now() - t;
-        await this.audit(documentId, 'classified', 'CLASSIFIED', { timing: timing.classify_ms });
-      }
+      this.logger.debug(`[${documentId}] → CLASSIFY`);
+      await this.classifier.classifyDocument(documentId);
 
-      // ── STEP 2: Route ──
       const freshDoc = await prisma.document.findUnique({ where: { id: documentId } });
       const docType = freshDoc?.documentType;
 
-      this.logger.log(`[${documentId}] Routing to purchase pipeline (type: ${docType})`);
-
-      // ── STEP 3: Extraction ─────────────────────────────
-      let extractionResult: any = null;
-      if (this.shouldRun(stage, 'EXTRACTED')) {
-        const t = Date.now();
-        this.logger.debug(`[${documentId}] → EXTRACT`);
-        extractionResult = await this.extraction.extractStructuredData(documentId);
-        timing.extract_ms = Date.now() - t;
-        this.metrics.recordLatency(PipelineMetrics.EXTRACTION_LATENCY, timing.extract_ms);
-        await this.audit(documentId, 'extracted', 'EXTRACTED', {
-          engine: extractionResult?.engine,
-          blockCount: extractionResult?.blocks?.length,
-          timing: timing.extract_ms,
-        });
+      if (docType !== 'AUCTION_SHEET' && docType !== 'PURCHASE') {
+        this.logger.warn(`[${documentId}] Document type ${docType} is not a supported purchase format. Attempting anyway...`);
       }
 
-      // ── STEP 4: Understanding ──────────────────────────
-      if (this.shouldRun(stage, 'UNDERSTOOD')) {
-        const t = Date.now();
-        this.logger.debug(`[${documentId}] → UNDERSTAND`);
+      // ── STEP 2: Purchase Extraction (Auction Sheet Processor) ──
+      this.logger.debug(`[${documentId}] → PROCESS (Purchase)`);
+      const result = await this.auctionProcessor.process(documentId);
 
-        // Get extraction blocks
-        const docData = await prisma.document.findUnique({ where: { id: documentId } });
-        const rawExtraction = docData?.rawExtraction as any;
-        const blocks = rawExtraction?.blocks || [];
-
-        const understandingResult = await this.understanding.understand(blocks);
-
-        // Persist understanding results
-        await prisma.document.update({
-          where: { id: documentId },
-          data: {
-            normalizedData: {
-              blocks: understandingResult.blocks,
-              tables: understandingResult.tables,
-              keyValuePairs: understandingResult.keyValuePairs,
-              fieldCandidates: understandingResult.fieldCandidates,
-            } as any,
-            stage: 'UNDERSTOOD',
-          },
-        });
-
-        timing.understand_ms = Date.now() - t;
-        this.metrics.recordLatency(PipelineMetrics.UNDERSTANDING_LATENCY, timing.understand_ms);
-        await this.audit(documentId, 'understood', 'UNDERSTOOD', {
-          blockCount: understandingResult.blocks.length,
-          tableCount: understandingResult.tables.length,
-          kvPairs: understandingResult.keyValuePairs.length,
-          fieldCandidates: understandingResult.fieldCandidates.length,
-          timing: timing.understand_ms,
-        });
-      }
-
-      // ── STEP 5: Segmentation ───────────────────────────
-      if (this.shouldRun(stage, 'SEGMENTED')) {
-        const t = Date.now();
-        this.logger.debug(`[${documentId}] → SEGMENT`);
-
-        const docData = await prisma.document.findUnique({ where: { id: documentId } });
-        const normalized = docData?.normalizedData as any;
-        const blocks = normalized?.blocks || [];
-        const candidates = normalized?.fieldCandidates || [];
-        const pageCount = docData?.pageCount || 1;
-
-        const segmentationResult = this.segmentation.segment(blocks, candidates, pageCount);
-
-        // Persist document groups
-        for (const group of segmentationResult.groups) {
-          await prisma.documentGroup.create({
-            data: {
-              documentId,
-              groupIndex: group.groupIndex,
-              groupType: group.groupType,
-              pageStart: group.pageRange.start,
-              pageEnd: group.pageRange.end,
-              identifiers: group.identifiers as any,
-              confidence: group.confidence,
-              signals: group.signals as any,
-            },
-          });
-        }
-
-        await prisma.document.update({
-          where: { id: documentId },
-          data: { stage: 'SEGMENTED' },
-        });
-
-        timing.segment_ms = Date.now() - t;
-        this.metrics.recordLatency(PipelineMetrics.SEGMENTATION_LATENCY, timing.segment_ms);
-        await this.audit(documentId, 'segmented', 'SEGMENTED', {
-          groupCount: segmentationResult.groups.length,
-          timing: timing.segment_ms,
-        });
-      }
-
-      // ── STEP 6: Translation ────────────────────────────
-      if (this.shouldRun(stage, 'TRANSLATED')) {
-        const t = Date.now();
-        this.logger.debug(`[${documentId}] → TRANSLATE`);
-
-        const docData = await prisma.document.findUnique({ where: { id: documentId } });
-        const normalized = docData?.normalizedData as any;
-        const blocks = normalized?.blocks || [];
-
-        const context: TranslationContext = {
-          documentType: docType || 'UNKNOWN',
-          section: 'general',
-          previousBlocks: [],
-          glossaryHints: [],
-          tenantId: docData?.tenantId,
-        };
-
-        const translatedBlocks = await this.blockTranslator.translateBatch(
-          blocks,
-          context,
-          documentId,
-        );
-
-        await prisma.document.update({
-          where: { id: documentId },
-          data: {
-            translatedData: { blocks: translatedBlocks } as any,
-            stage: 'TRANSLATED',
-          },
-        });
-
-        timing.translate_ms = Date.now() - t;
-        this.metrics.recordLatency(PipelineMetrics.TRANSLATION_LATENCY, timing.translate_ms);
-        await this.audit(documentId, 'translated', 'TRANSLATED', {
-          blockCount: translatedBlocks.length,
-          timing: timing.translate_ms,
-        });
-      }
-
-      // ── STEP 7: Schema Mapping (replaces old NORMALIZED) ──
-      if (this.shouldRun(stage, 'NORMALIZED')) {
-        const t = Date.now();
-        this.logger.debug(`[${documentId}] → MAP + NORMALIZE`);
-
-        const docData = await prisma.document.findUnique({ where: { id: documentId } });
-        const normalized = docData?.normalizedData as any;
-        const translated = docData?.translatedData as any;
-        const candidates = normalized?.fieldCandidates || [];
-        const translatedBlocks = translated?.blocks || [];
-
-        const mappingResult = this.schemaMapper.map(
-          docType || 'UNKNOWN',
-          candidates,
-          translatedBlocks,
-          documentId,
-        );
-
-        await prisma.document.update({
-          where: { id: documentId },
-          data: {
-            canonicalJson: mappingResult.canonicalOutput as any,
-            stage: 'NORMALIZED',
-          },
-        });
-
-        timing.map_ms = Date.now() - t;
-        this.metrics.recordLatency('latency.mapping_ms', timing.map_ms);
-        await this.audit(documentId, 'mapped', 'NORMALIZED', {
-          mappedFields: mappingResult.mappingTrace.fieldMappings.length,
-          warnings: mappingResult.mappingTrace.warnings,
-          timing: timing.map_ms,
-        });
-      }
-
-      // ── STEP 8: Validation ─────────────────────────────
-      if (this.shouldRun(stage, 'VALIDATED')) {
-        const t = Date.now();
-        this.logger.debug(`[${documentId}] → VALIDATE`);
-
-        const docData = await prisma.document.findUnique({ where: { id: documentId } });
-        let canonical = docData?.canonicalJson as any;
-
-        // Strict Purchase Validation (everything is a purchase record list now)
-        const validationErrors = this.purchaseValidator.validate(canonical);
-
-        // Distribution Validation
-        const distributionValidator = new (require('../validation/validators/distribution.validator').DistributionValidator)();
-        const distributionReport = distributionValidator.validate(canonical?.records || []);
-        
-        canonical.distributionReport = distributionReport;
-
-        // Calculate Document-Level Confidence
-        const mappingTrace = canonical?.mappingTrace;
-        let meanRowConfidence = 1.0;
-        if (mappingTrace && mappingTrace.rowTraces && mappingTrace.rowTraces.length > 0) {
-          meanRowConfidence = mappingTrace.rowTraces.reduce((sum: number, r: any) => sum + (r.mappingScores?.overall || 0), 0) / mappingTrace.rowTraces.length;
-        }
-
-        const totalRows = canonical?.records?.length || 0;
-        const failedMathRows = validationErrors.filter((e: any) => e.rule === 'math_check').length;
-        const mathPassRate = totalRows > 0 ? (totalRows - failedMathRows) / totalRows : 1.0;
-
-        const distributionStability = distributionReport.distributionStability;
-
-        const documentConfidence = (meanRowConfidence * 0.6) + (mathPassRate * 0.2) + (distributionStability * 0.2);
-
-        await prisma.document.update({
-          where: { id: documentId },
-          data: {
-            canonicalJson: canonical,
-            validationErrors: validationErrors as any,
-            overallConfidence: documentConfidence,
-            stage: 'VALIDATED',
-          },
-        });
-
-        timing.validate_ms = Date.now() - t;
-        this.metrics.recordLatency(PipelineMetrics.VALIDATION_LATENCY, timing.validate_ms);
-        await this.audit(documentId, 'validated', 'VALIDATED', {
-          errorCount: validationErrors.length,
-          errors: validationErrors.filter((e: any) => e.severity === 'error').length,
-          warnings: validationErrors.filter((e: any) => e.severity === 'warning').length,
-          documentConfidence,
-          distributionStability,
-          timing: timing.validate_ms,
-        });
-      }
-
-      // ── STEP 9: Quality Gate ───────────────────────────
-      if (this.shouldRun(stage, 'QUALITY_CHECKED')) {
-        const t = Date.now();
-        this.logger.debug(`[${documentId}] → QUALITY GATE`);
-
-        const finalStatus = await this.qualityGate.evaluate(documentId);
-        timing.quality_ms = Date.now() - t;
-
-        await this.audit(documentId, 'quality_checked', 'QUALITY_CHECKED', {
-          status: finalStatus,
-          timing: timing.quality_ms,
-        });
-        this.logger.log(`[${documentId}] Quality gate → ${finalStatus}`);
-      }
-
-      // ── STEP 10: ERP Contract Generation ────────────────
-      const docForErp = await prisma.document.findUnique({ where: { id: documentId } });
-      const canonical = docForErp?.canonicalJson as any;
-      const docConfidence = docForErp?.overallConfidence || 0;
+      // The auctionProcessor already persists canonicalJson and updates status.
       
-      const erpPayload = this.erpAdapter.toErpPayload(canonical?.records || [], docConfidence);
-
-      // Mark finished
-      await prisma.document.update({
-        where: { id: documentId },
-        data: {
-          erpPayload: erpPayload as any,
-          stage: 'EXPOSED',
-          processingEnded: new Date(),
-        },
-      });
-
-      this.metrics.increment(PipelineMetrics.DOCS_PROCESSED);
       this.logger.log(
-        `✔ Pipeline v${this.PIPELINE_VERSION} finished for ${documentId}. Timing: ${JSON.stringify(timing)}`,
+        `✔ Simplified pipeline finished for ${documentId}. Rows: ${result.payload.rows.length}, Confidence: ${result.confidence}`,
       );
     } catch (err: any) {
       this.logger.error(`✘ Pipeline failed for ${documentId}: ${err.message}`, err.stack);
-      this.metrics.increment(PipelineMetrics.DOCS_FAILED);
-
+      
       await prisma.document.update({
         where: { id: documentId },
         data: {
@@ -361,59 +72,16 @@ export class OrchestratorService {
         },
       });
 
-      await this.audit(documentId, 'failed', doc.stage, {
-        error: err.message,
-        timing,
+      await prisma.auditLog.create({
+        data: {
+          documentId,
+          action: 'failed',
+          stage: 'ERROR',
+          actor: 'system',
+          details: { error: err.message },
+        },
       });
-      throw err; // BullMQ will retry based on job config
+      throw err;
     }
-  }
-
-  /**
-   * Retry pipeline from a specific stage.
-   */
-  async retryFromStage(documentId: string, fromStage: string): Promise<void> {
-    this.logger.log(`Retrying ${documentId} from stage ${fromStage}`);
-
-    // Reset stage to trigger re-run
-    await prisma.document.update({
-      where: { id: documentId },
-      data: {
-        stage: fromStage as any,
-        status: 'QUEUED',
-      },
-    });
-
-    await this.audit(documentId, 'retry', fromStage, { fromStage });
-    await this.runPipeline(documentId);
-  }
-
-  // ─── Stage ordering helper ─────────────────────────────
-  private readonly STAGE_ORDER = [
-    'INGESTED',
-    'CLASSIFIED',
-    'EXTRACTED',
-    'UNDERSTOOD',
-    'SEGMENTED',
-    'TRANSLATED',
-    'NORMALIZED',
-    'VALIDATED',
-    'QUALITY_CHECKED',
-    'STORED',
-    'EXPOSED',
-  ];
-
-  /** Return true if current stage has NOT yet reached `target`. */
-  private shouldRun(currentStage: string, target: string): boolean {
-    const currentIdx = this.STAGE_ORDER.indexOf(currentStage);
-    const targetIdx = this.STAGE_ORDER.indexOf(target);
-    return currentIdx < targetIdx;
-  }
-
-  // ─── Audit helper ─────────────────────────────────────
-  private async audit(documentId: string, action: string, stage: string, details?: any) {
-    await prisma.auditLog.create({
-      data: { documentId, action, stage, actor: 'system', details },
-    });
   }
 }

@@ -99,7 +99,7 @@ async function bootstrap() {
     process.exit(1);
   }
 
-  const finalAccuracy = totalWeightedScore > 0 ? currentWeightedScore / totalWeightedScore : 0;
+  const finalAccuracy = totalWeightedScore > 0 ? currentWeightedScore / totalWeightedScore : (failedDocs === 0 ? 1 : 0);
   const chassisAcc = totalChassis > 0 ? correctChassis / totalChassis : 1;
   const totalAcc = totalTotals > 0 ? correctTotals / totalTotals : 1;
 

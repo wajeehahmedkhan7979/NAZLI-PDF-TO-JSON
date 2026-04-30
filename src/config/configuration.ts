@@ -28,8 +28,8 @@ export const envValidationSchema = z.object({
 
   // Marker sidecar circuit breaker
   MARKER_SIDECAR_URL: z.string().default('http://localhost:8001'),
-  MARKER_TIMEOUT_MS: z.string().transform(Number).default('120000'),
-  MARKER_MAX_RETRIES: z.string().transform(Number).default('2'),
+  MARKER_TIMEOUT_MS: z.string().transform(Number).default('600000'),
+  MARKER_MAX_RETRIES: z.string().transform(Number).default('3'),
   MARKER_CB_FAILURE_THRESHOLD: z.string().transform(Number).default('5'),
   MARKER_CB_RECOVERY_MS: z.string().transform(Number).default('30000'),
 

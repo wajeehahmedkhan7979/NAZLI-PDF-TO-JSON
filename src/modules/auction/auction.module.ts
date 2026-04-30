@@ -5,6 +5,7 @@ import { AuctionParser } from './auction-parser';
 import { ColumnMapper } from './column-mapper';
 import { AuctionValidator } from './auction-validator';
 import { AuctionSheetProcessor } from './auction-sheet.processor';
+import { AuctionOcr } from './auction-ocr';
 
 @Module({
   providers: [
@@ -13,6 +14,7 @@ import { AuctionSheetProcessor } from './auction-sheet.processor';
     AuctionParser,
     ColumnMapper,
     AuctionValidator,
+    AuctionOcr,
     AuctionSheetProcessor,
   ],
   exports: [AuctionSheetProcessor],

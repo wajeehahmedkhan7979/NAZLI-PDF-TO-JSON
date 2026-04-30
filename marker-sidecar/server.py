@@ -10,6 +10,7 @@ Designed to be called by the NestJS orchestrator over HTTP.
 LLM boost is OFF by default — controlled by the NestJS LlmBudgetManager.
 """
 
+import gc
 import hashlib
 import logging
 import os
@@ -19,6 +20,7 @@ from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger("marker-sidecar")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -133,7 +135,7 @@ async def convert_pdf(
                 logger.warning(f"LLM service unavailable: {e}. Proceeding without LLM.")
 
         converter = PdfConverter(**converter_kwargs)
-        rendered = converter(tmp_path)
+        rendered = await run_in_threadpool(converter, tmp_path)
 
         elapsed_ms = int((time.time() - start) * 1000)
 
@@ -162,6 +164,17 @@ async def convert_pdf(
 
         if hasattr(rendered, "metadata"):
             result["metadata"] = _serialize_metadata(rendered.metadata)
+
+        # Free converter memory immediately
+        del converter
+        del rendered
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
         logger.info(
             f"Converted {file.filename}: {len(result['pages'])} pages in {elapsed_ms}ms"
@@ -227,7 +240,7 @@ async def convert_tables(
                 pass
 
         converter = TableConverter(**converter_kwargs)
-        rendered = converter(tmp_path)
+        rendered = await run_in_threadpool(converter, tmp_path)
 
         elapsed_ms = int((time.time() - start) * 1000)
 

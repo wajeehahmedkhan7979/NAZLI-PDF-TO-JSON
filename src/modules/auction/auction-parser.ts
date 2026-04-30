@@ -44,8 +44,13 @@ export class AuctionParser {
   private readonly logger = new Logger(AuctionParser.name);
 
   private readonly AUCTION_PREFIXES = ['TC-web', 'ANS', 'USS'];
-  private readonly CHASSIS_REGEX = /([A-Z][A-Z0-9]*-\d{4,})/;
-  private readonly DATE_REGEX = /(\d{2}\/\d{2})/;
+  private readonly CHASSIS_REGEX = /([A-Z0-9]+-\d+)/;
+  private readonly VIN_REGEX = /([A-HJ-NPR-Z0-9]{17})/;
+  private readonly DATE_REGEX = /(\d{1,2}\/\d{1,2}(?:\/\d{4})?)/;
+  private readonly ERA_YEAR_REGEX = /(R\d+|H\d+|S\d+)/;
+  private readonly WESTERN_YEAR_REGEX = /((?:19|20)\d{2})/;
+  private readonly CURRENCY_REGEX = /([¥￥]?\s?\d{1,3}(?:,\d{3})*(?:円)?)/;
+  
   // We'll no longer use LOT_AREA_REGEX for Lot number, only for Area if it's packed.
   private readonly AREA_REGEX = /^(\d+)?([^\d].+)$/;
   private readonly VENUE_NAMES = [
@@ -139,6 +144,9 @@ export class AuctionParser {
     if (roles.lotAreaLine) {
       const areaMatch = roles.lotAreaLine.match(this.AREA_REGEX);
       if (areaMatch) {
+         if (areaMatch[1] && lotNumber === null) {
+           lotNumber = parseInt(areaMatch[1], 10);
+         }
          auctionLocation = areaMatch[2].trim();
       }
     }
@@ -241,14 +249,13 @@ export class AuctionParser {
       }
 
       // True Lot Number line: 3-5 standalone digits (often directly preceding Chassis or at start)
-      if (!lotLine && /^\d{3,6}$/.test(line.trim())) {
+      if (!lotLine && /^\d{3,5}$/.test(line.trim())) {
         const val = parseInt(line.trim(), 10);
-        // HEURISTIC: Skip if it's a common auction fee AND it's not the very first line of the block
+        // HEURISTIC: Skip if it's a common auction fee.
         // (This helps distinguish Lot 1450 from Fee 1450 if they both match the regex)
         const isCommonFee = this.COMMON_FEES.includes(val);
-        const isLateInBlock = i > 2;
 
-        if (isCommonFee && isLateInBlock) {
+        if (isCommonFee) {
           // Likely a fee masquerading as a lot, skip for now to let Pass 3 catch it as a fee
           this.logger.debug(`Skipping lot candidate ${val} at index ${i} - likely a fee`);
         } else {

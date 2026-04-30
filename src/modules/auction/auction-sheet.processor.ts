@@ -7,21 +7,13 @@ import { BlockSegmenter } from './block-segmenter';
 import { AuctionParser } from './auction-parser';
 import { ColumnMapper } from './column-mapper';
 import { AuctionValidator } from './auction-validator';
-import { AuctionSheetDocument, AuctionRow } from '../../common/schemas/auction.schema';
+import { PurchaseExtractionResult, PurchaseRecord } from '../../common/schemas/purchase.schema';
+import { AuctionOcr } from './auction-ocr';
 
 const prisma = new PrismaClient();
 
 /**
- * AuctionSheetProcessor — Strategy implementation for AUCTION_SHEET documents.
- *
- * Pipeline:
- *   Raw Text → Line Preprocessing → Block Segmentation
- *   → Row Reconstruction → Column Mapping → Validation → JSON Output
- *
- * This processor DOES NOT use:
- * - LLM for parsing
- * - Key-value semantic extraction
- * - Translation before structuring
+ * AuctionSheetProcessor — Strategy implementation for purchase document extraction.
  */
 @Injectable()
 export class AuctionSheetProcessor implements DocumentProcessor {
@@ -32,6 +24,7 @@ export class AuctionSheetProcessor implements DocumentProcessor {
     private auctionParser: AuctionParser,
     private columnMapper: ColumnMapper,
     private auctionValidator: AuctionValidator,
+    private auctionOcr: AuctionOcr,
   ) {}
 
   /**
@@ -41,69 +34,61 @@ export class AuctionSheetProcessor implements DocumentProcessor {
     const document = await prisma.document.findUnique({ where: { id: documentId } });
     if (!document) throw new Error(`Document ${documentId} not found`);
 
-    this.logger.log(`▶ Auction pipeline started for ${documentId}`);
+    this.logger.log(`▶ Purchase pipeline started for ${documentId}`);
 
     // ── Step 1: Raw Text Acquisition ──────────────────────────
-    const rawText = await this.extractRawText(document.storagePath);
+    let rawText = await this.extractRawText(document.storagePath);
 
     if (!rawText || rawText.trim().length < 10) {
-      this.logger.warn(`Document ${documentId} has no extractable text — may need OCR`);
-      return {
-        type: 'AUCTION_SHEET',
-        payload: this.buildEmptyResult(document),
-        confidence: 0,
-        flags: ['NO_TEXT_CONTENT', 'NEEDS_OCR'],
-      };
+      this.logger.warn(`Document ${documentId} has no extractable text — falling back to OCR`);
+      rawText = await this.auctionOcr.extractText(document.storagePath);
+    }
+
+    if (!rawText || rawText.trim().length < 10) {
+      const payload = this.buildEmptyResult();
+      await this.persistResults(documentId, payload, 0, ['NO_TEXT_CONTENT']);
+      return { type: 'AUCTION_SHEET', payload, confidence: 0, flags: ['NO_TEXT_CONTENT'] };
     }
 
     // ── Step 2: Extract document-level metadata ───────────────
-    const docMeta = this.extractDocumentMeta(rawText, document.originalName);
+    const docMeta = this.extractDocumentMeta(rawText);
 
     // ── Step 3: Block Segmentation ────────────────────────────
     const blocks = this.blockSegmenter.segment(rawText);
     this.logger.log(`Found ${blocks.length} vehicle blocks`);
 
     if (blocks.length === 0) {
-      return {
-        type: 'AUCTION_SHEET',
-        payload: this.buildEmptyResult(document),
-        confidence: 0,
-        flags: ['NO_BLOCKS_FOUND'],
-      };
+      const payload = this.buildEmptyResult();
+      await this.persistResults(documentId, payload, 0, ['NO_BLOCKS_FOUND']);
+      return { type: 'AUCTION_SHEET', payload, confidence: 0, flags: ['NO_BLOCKS_FOUND'] };
     }
 
     // ── Step 4: Row Reconstruction + Column Mapping ───────────
-    const rows: AuctionRow[] = [];
+    const rawRows: PurchaseRecord[] = [];
     for (const block of blocks) {
       const parsed = this.auctionParser.parseBlock(block);
       const mapped = this.columnMapper.mapRow(parsed, docMeta.year);
-      rows.push(mapped);
+      rawRows.push(mapped);
     }
 
     // ── Step 5: Validation ────────────────────────────────────
     const { validatedRows, validCount, invalidCount, reviewCount } =
-      this.auctionValidator.validateAll(rows);
-
-    // ── Step 6: Build output ──────────────────────────────────
-    const output: AuctionSheetDocument = {
-      type: 'AUCTION_SHEET',
-      rows: validatedRows,
-      meta: {
-        sourceFile: document.originalName,
-        parsedAt: new Date().toISOString(),
-        totalRows: validatedRows.length,
-        validRows: validCount,
-        invalidRows: invalidCount,
-        documentDate: docMeta.date || undefined,
-        issuer: docMeta.issuer || undefined,
-        client: docMeta.client || undefined,
-      },
-    };
+      this.auctionValidator.validateAll(rawRows);
 
     // Compute overall confidence
     const avgConfidence = validatedRows.length > 0
       ? validatedRows.reduce((sum, r) => sum + r.confidence, 0) / validatedRows.length
       : 0;
+
+    // ── Step 6: Build output ──────────────────────────────────
+    const output: PurchaseExtractionResult = {
+      status: invalidCount === 0 ? 'SUCCESS' : (validCount > 0 ? 'PARTIAL' : 'FAILED'),
+      records: validatedRows,
+      confidence: parseFloat(avgConfidence.toFixed(3)),
+      errors: [],
+    };
+
+    if (invalidCount > 0) output.errors.push(`${invalidCount} rows failed validation`);
 
     // Collect all flags
     const allFlags: string[] = [];
@@ -113,132 +98,90 @@ export class AuctionSheetProcessor implements DocumentProcessor {
     // ── Step 7: Persist to database ───────────────────────────
     await this.persistResults(documentId, output, avgConfidence, allFlags);
 
-    this.logger.log(
-      `✔ Auction pipeline complete for ${documentId}: ${validCount} valid, ${reviewCount} review, ${invalidCount} invalid`,
-    );
-
     return {
       type: 'AUCTION_SHEET',
       payload: output,
-      confidence: parseFloat(avgConfidence.toFixed(3)),
+      confidence: output.confidence,
       flags: allFlags,
     };
   }
 
-  /**
-   * Extract raw text from PDF using pdf-parse.
-   */
   private async extractRawText(filePath: string): Promise<string> {
     try {
       const dataBuffer = await fs.promises.readFile(filePath);
       const pdfData = await pdfParse(dataBuffer);
       return pdfData.text || '';
     } catch (err: any) {
-      this.logger.error(`Failed to extract text from ${filePath}: ${err.message}`);
+      this.logger.error(`Failed to extract text: ${err.message}`);
       return '';
     }
   }
 
-  /**
-   * Extract document-level metadata from text (date, issuer, client).
-   */
-  private extractDocumentMeta(rawText: string, filename: string): {
-    year: number;
-    date: string | null;
-    issuer: string | null;
-    client: string | null;
-  } {
-    // Extract year from document date pattern: "2026 年 04 月 04 日"
-    const dateMatch = rawText.match(/(\d{4})\s*年\s*(\d{2})\s*月\s*(\d{2})\s*日/);
+  private extractDocumentMeta(rawText: string): { year: number } {
+    const dateMatch = rawText.match(/(\d{4})\s*年/);
     let year = new Date().getFullYear();
-    let date: string | null = null;
-
-    if (dateMatch) {
-      year = parseInt(dateMatch[1], 10);
-      date = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
-    }
-
-    // Extract issuer
-    const issuerMatch = rawText.match(/発行元\s*([\S]+)/);
-    const issuer = issuerMatch ? issuerMatch[1] : null;
-
-    // Extract client
-    const clientMatch = rawText.match(/([\S]+)\s*御中/);
-    const client = clientMatch ? clientMatch[1] : null;
-
-    return { year, date, issuer, client };
+    if (dateMatch) year = parseInt(dateMatch[1], 10);
+    return { year };
   }
 
-  /**
-   * Persist auction results to the database.
-   */
   private async persistResults(
     documentId: string,
-    output: AuctionSheetDocument,
+    output: PurchaseExtractionResult,
     confidence: number,
     flags: string[],
   ): Promise<void> {
-    // Store canonical JSON
+    let status = 'COMPLETED';
+    if (output.records.length === 0) {
+      status = 'FAILED';
+    } else if (flags.some(f => f.includes('INVALID') || f.includes('REVIEW'))) {
+      status = 'NEEDS_REVIEW';
+    }
+
     await prisma.document.update({
       where: { id: documentId },
       data: {
         canonicalJson: output as any,
-        frontendJson: output as any,
         overallConfidence: confidence,
         qualityFlags: flags,
         stage: 'EXPOSED',
-        status: flags.some(f => f.includes('INVALID')) ? 'NEEDS_REVIEW' : 'COMPLETED',
+        status: status as any,
         processingEnded: new Date(),
       },
     });
 
-    // Store individual rows as line items for the review module
-    for (let i = 0; i < output.rows.length; i++) {
-      const row = output.rows[i];
+    for (let i = 0; i < output.records.length; i++) {
+      const row = output.records[i];
       await prisma.lineItem.create({
         data: {
           documentId,
           lineNumber: i + 1,
-          originalDescription: row.carName || `Vehicle ${i + 1}`,
-          englishDescription: row.carName || undefined,
+          originalDescription: row.chassis,
           quantity: 1,
-          unitPrice: row.startingPrice || undefined,
-          subtotal: row.finalPrice,
+          unitPrice: row.bid,
+          subtotal: row.total,
           confidence: row.confidence,
-          rawText: (row.rawBlock || []).join('\n'),
-          extractionMethod: 'auction_layout_parser',
+          extractionMethod: 'deterministic_parser',
         },
       });
     }
 
-    // Audit log
     await prisma.auditLog.create({
       data: {
         documentId,
-        action: 'auction_processed',
+        action: 'processed',
         stage: 'EXPOSED',
         actor: 'system',
-        details: {
-          totalRows: output.meta.totalRows,
-          validRows: output.meta.validRows,
-          invalidRows: output.meta.invalidRows,
-          confidence,
-        } as any,
+        details: { rowCount: output.records.length, confidence },
       },
     });
   }
 
-  private buildEmptyResult(document: any): AuctionSheetDocument {
+  private buildEmptyResult(): PurchaseExtractionResult {
     return {
-      type: 'AUCTION_SHEET',
-      rows: [],
-      meta: {
-        sourceFile: document.originalName,
-        parsedAt: new Date().toISOString(),
-        totalRows: 0,
-        validRows: 0,
-        invalidRows: 0,
-      },
+      status: 'FAILED',
+      records: [],
+      confidence: 0,
+      errors: ['No extraction results produced'],
     };
   }
 }

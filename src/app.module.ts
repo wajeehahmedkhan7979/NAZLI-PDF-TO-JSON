@@ -8,14 +8,7 @@ import { configuration, envValidationSchema } from './config/configuration';
 import { HealthModule } from './modules/health/health.module';
 import { IngestionModule } from './modules/ingestion/ingestion.module';
 import { ClassifierModule } from './modules/classifier/classifier.module';
-import { ExtractionModule } from './modules/extraction/extraction.module';
-import { UnderstandingModule } from './modules/understanding/understanding.module';
-import { SegmentationModule } from './modules/segmentation/segmentation.module';
-import { NormalizationModule } from './modules/normalization/normalization.module';
-import { TranslationModule } from './modules/translation/translation.module';
-import { ValidationModule } from './modules/validation/validation.module';
-import { SchemaMapperModule } from './modules/schema-mapper/schema-mapper.module';
-import { DocumentsModule } from './modules/documents/documents.module';
+import { AuctionModule } from './modules/auction/auction.module';
 import { OrchestratorModule } from './modules/orchestrator/orchestrator.module';
 import { MetricsModule } from './modules/health/metrics.module';
 import { CacheModule } from './common/cache/cache.module';
@@ -57,14 +50,7 @@ import { CacheModule } from './common/cache/cache.module';
     HealthModule,
     IngestionModule,
     ClassifierModule,
-    ExtractionModule,
-    UnderstandingModule,
-    SegmentationModule,
-    NormalizationModule,
-    TranslationModule,
-    ValidationModule,
-    SchemaMapperModule,
-    DocumentsModule,
+    AuctionModule,
     OrchestratorModule,
     MetricsModule,
     CacheModule,

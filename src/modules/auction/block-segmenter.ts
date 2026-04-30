@@ -45,9 +45,9 @@ export class BlockSegmenter {
     'その他', '非課税'
   ];
 
-  // Chassis regex: [Letter(s)][AlphaNum]-[Digits]
-  private readonly CHASSIS_REGEX = /^(\d+)?([A-Z][A-Z0-9]*-\d+)$/;
-  private readonly CHASSIS_INLINE_REGEX = /([A-Z][A-Z0-9]*-\d{4,})/;
+  // Chassis regex: [AlphaNum]-[Digits]
+  private readonly CHASSIS_REGEX = /^(\d+)?([A-Z0-9]+-\d+)$/;
+  private readonly CHASSIS_INLINE_REGEX = /([A-Z0-9]+-\d+)/;
 
   /**
    * Segment raw text into vehicle record blocks.
