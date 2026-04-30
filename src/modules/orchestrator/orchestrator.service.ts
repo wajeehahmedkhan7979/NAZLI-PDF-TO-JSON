@@ -59,7 +59,7 @@ export class OrchestratorService {
       // The auctionProcessor already persists canonicalJson and updates status.
       
       this.logger.log(
-        `✔ Simplified pipeline finished for ${documentId}. Rows: ${result.payload.rows.length}, Confidence: ${result.confidence}`,
+        `✔ Simplified pipeline finished for ${documentId}. Records: ${result.payload.records.length}, Confidence: ${result.confidence}`,
       );
     } catch (err: any) {
       this.logger.error(`✘ Pipeline failed for ${documentId}: ${err.message}`, err.stack);

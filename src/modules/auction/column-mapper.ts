@@ -39,36 +39,24 @@ export class ColumnMapper {
 
   /**
    * Map a parsed row to the final schema.
-   * @param parsed The parsed auction row
-   * @param documentYear The year from the document header (fallback: current year)
    */
   mapRow(parsed: ParsedAuctionRow, documentYear: number): PurchaseRecord {
     // ─── Date normalization ──────────────────────────────────
-    let isoDate = '';
-    if (parsed.date) {
-      const [month, day] = parsed.date.split('/').map(Number);
-      isoDate = `${documentYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    }
-
-    // ─── Auction platform cleanup ──────────────────────────────
-    let auction = parsed.auctionPlatform || '';
-    if (auction.startsWith('TC-web')) auction = 'TC-web';
-    if (auction.startsWith('ANS')) auction = 'ANS';
-    if (auction.startsWith('USS')) auction = 'USS';
-
+    let isoDate = parsed.date || '';
+    
     // ─── Build output ────────────────────────────────────────
     return {
       date: isoDate,
-      auction: auction,
-      area: parsed.auctionLocation ? (this.AREA_MAP[parsed.auctionLocation] || parsed.auctionLocation) : '',
+      auction: parsed.auction || '',
+      area: parsed.area ? (this.AREA_MAP[parsed.area] || parsed.area) : '',
       lotNumber: parsed.lotNumber ?? undefined,
       year: documentYear,
       chassis: parsed.chassis || '',
-      bid: parsed.startingPrice || 0,
+      bid: parsed.bid || 0,
       recycle: parsed.recycle ?? undefined,
       jidosha: parsed.jidosha ?? undefined,
       auctionFee: parsed.auctionFee ?? undefined,
-      total: parsed.finalPrice || 0,
+      total: parsed.total || 0,
       confidence: parsed.confidence,
       flags: parsed.flags,
     };

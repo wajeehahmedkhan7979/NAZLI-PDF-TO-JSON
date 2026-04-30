@@ -53,7 +53,10 @@ export class AuctionSheetProcessor implements DocumentProcessor {
     // ── Step 2: Extract document-level metadata ───────────────
     const docMeta = this.extractDocumentMeta(rawText);
 
-    // ── Step 3: Block Segmentation ────────────────────────────
+    // ── Step 3: Select Template Parser ────────────────────────
+    this.auctionParser.selectParser(rawText);
+
+    // ── Step 4: Block Segmentation ────────────────────────────
     const blocks = this.blockSegmenter.segment(rawText);
     this.logger.log(`Found ${blocks.length} vehicle blocks`);
 
@@ -63,15 +66,28 @@ export class AuctionSheetProcessor implements DocumentProcessor {
       return { type: 'AUCTION_SHEET', payload, confidence: 0, flags: ['NO_BLOCKS_FOUND'] };
     }
 
-    // ── Step 4: Row Reconstruction + Column Mapping ───────────
+    // ── Step 5: Row Reconstruction + Column Mapping ───────────
     const rawRows: PurchaseRecord[] = [];
+    const errors: string[] = [];
+
     for (const block of blocks) {
-      const parsed = this.auctionParser.parseBlock(block);
-      const mapped = this.columnMapper.mapRow(parsed, docMeta.year);
-      rawRows.push(mapped);
+      const parsed = this.auctionParser.parseBlock(block, docMeta.year);
+      if (parsed) {
+        const mapped = this.columnMapper.mapRow(parsed, docMeta.year);
+        rawRows.push(mapped);
+      } else {
+        errors.push('INVALID_ROW_SKIPPED');
+      }
     }
 
-    // ── Step 5: Validation ────────────────────────────────────
+    if (rawRows.length === 0) {
+      const payload = this.buildEmptyResult();
+      payload.errors.push(...errors);
+      await this.persistResults(documentId, payload, 0, ['ALL_ROWS_REJECTED']);
+      return { type: 'AUCTION_SHEET', payload, confidence: 0, flags: ['ALL_ROWS_REJECTED'] };
+    }
+
+    // ── Step 6: Validation ────────────────────────────────────
     const { validatedRows, validCount, invalidCount, reviewCount } =
       this.auctionValidator.validateAll(rawRows);
 
@@ -80,12 +96,12 @@ export class AuctionSheetProcessor implements DocumentProcessor {
       ? validatedRows.reduce((sum, r) => sum + r.confidence, 0) / validatedRows.length
       : 0;
 
-    // ── Step 6: Build output ──────────────────────────────────
+    // ── Step 7: Build output ──────────────────────────────────
     const output: PurchaseExtractionResult = {
       status: invalidCount === 0 ? 'SUCCESS' : (validCount > 0 ? 'PARTIAL' : 'FAILED'),
       records: validatedRows,
       confidence: parseFloat(avgConfidence.toFixed(3)),
-      errors: [],
+      errors: [...errors],
     };
 
     if (invalidCount > 0) output.errors.push(`${invalidCount} rows failed validation`);
@@ -94,8 +110,9 @@ export class AuctionSheetProcessor implements DocumentProcessor {
     const allFlags: string[] = [];
     if (invalidCount > 0) allFlags.push(`${invalidCount}_INVALID_ROWS`);
     if (reviewCount > 0) allFlags.push(`${reviewCount}_REVIEW_ROWS`);
+    if (errors.length > 0) allFlags.push('HAS_SKIPPED_ROWS');
 
-    // ── Step 7: Persist to database ───────────────────────────
+    // ── Step 8: Persist to database ───────────────────────────
     await this.persistResults(documentId, output, avgConfidence, allFlags);
 
     return {
