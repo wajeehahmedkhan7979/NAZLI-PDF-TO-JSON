@@ -52,14 +52,14 @@ export class LegacyBackend implements ExtractionBackend {
       const totalText = rawBlocks.reduce((acc, b) => acc + (b.text || '').length, 0);
       if (totalText < 50) {
         this.logger.warn('Text extraction returned too little content, attempting OCR...');
-        try {
-          rawBlocks = await this.ocrExtractor.extract([filePath]);
-          extractionMethod = 'ocr';
-        } catch (err: any) {
-          this.logger.error(`OCR fallback failed: ${err.message}`);
-          // Keep whatever we got from pdf-parse
-        }
+        rawBlocks = await this.ocrExtractor.extract([filePath]);
+        extractionMethod = 'ocr';
       }
+    }
+
+
+    if (!rawBlocks || rawBlocks.length === 0) {
+      throw new Error('Extraction produced zero blocks; marking as failed for safe handling');
     }
 
     // Apply table detection
