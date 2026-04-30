@@ -20,7 +20,7 @@ export interface DocumentGroup {
 
 export interface GroupingSignal {
   /** Signal type */
-  type: 'header_repeat' | 'identifier_match' | 'layout_similarity' | 'semantic_boundary' | 'density_shift' | 'hard_rule';
+  type: 'header_repeat' | 'identifier_match' | 'layout_similarity' | 'semantic_boundary' | 'density_shift' | 'hard_rule' | 'column_structure_change';
   /** Pages involved */
   pages: number[];
   /** Signal strength (0–1) */

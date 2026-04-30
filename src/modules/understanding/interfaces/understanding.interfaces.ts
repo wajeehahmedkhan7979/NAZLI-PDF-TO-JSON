@@ -161,6 +161,10 @@ export interface FieldCandidate {
     /** Key-value pair if detected */
     kvPair?: KeyValuePair;
   };
+  /** Spatial metadata for row grouping */
+  metadata?: {
+    bbox?: number[];
+  };
 }
 
 // ── Understanding Result ─────────────────────────────────────────

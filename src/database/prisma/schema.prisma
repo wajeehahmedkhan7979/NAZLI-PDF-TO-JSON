@@ -33,6 +33,7 @@ model Document {
   translatedData  Json?            @map("translated_data")
   canonicalJson   Json?            @map("canonical_json")
   frontendJson    Json?            @map("frontend_json")
+  erpPayload      Json?            @map("erp_payload")
 
   // Quality
   overallConfidence Float?         @map("overall_confidence")

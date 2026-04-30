@@ -137,8 +137,30 @@ export class FieldCandidateBuilder {
     },
     {
       fieldType: 'RECYCLE_FEE',
-      patterns: [/^[\d,]{3,}$/],
-      labelHints: ['リサイクル', 'リサイクル料', '自動車リサイクル'],
+      patterns: [/^[¥￥]?\s?[\d,]{3,5}$/],
+      labelHints: ['リサイクル', 'リサイクル料', '自動車リサイクル', '預託金'],
+      confidence: 0.7,
+    },
+    {
+      fieldType: 'YEAR',
+      patterns: [
+        /^[12][0-9]{3}$/, // Western year
+        /^(R|H|S)\d{1,2}$/, // Era abbreviation
+        /^(令和|平成|昭和)\d+年/
+      ],
+      labelHints: ['年式', '初度登録', '年'],
+      confidence: 0.8,
+    },
+    {
+      fieldType: 'AUCTION' as any,
+      patterns: [/USS|TAA|HAA|CAA|JU|LAA|SAA|RAA|KAA/i],
+      labelHints: ['会場', 'オークション'],
+      confidence: 0.8,
+    },
+    {
+      fieldType: 'AREA' as any,
+      patterns: [/神戸|横浜|大阪|名古屋|東京|札幌|福岡|広島|岡山|千葉|埼玉/],
+      labelHints: ['地域', '場所', '会場名'],
       confidence: 0.7,
     },
   ];
@@ -237,6 +259,9 @@ export class FieldCandidateBuilder {
           nearbyLabels: [kv.label],
           kvPair: kv,
         },
+        metadata: {
+          bbox: sourceBlock?.bbox
+        },
       });
     }
 
@@ -286,6 +311,9 @@ export class FieldCandidateBuilder {
           context: {
             section: block.sectionType,
             nearbyLabels: [],
+          },
+          metadata: {
+            bbox: block.bbox
           },
         });
       }

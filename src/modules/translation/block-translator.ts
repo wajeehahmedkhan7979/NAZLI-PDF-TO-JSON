@@ -160,6 +160,25 @@ export class BlockTranslator {
       };
     }
 
+    // ── Step 5: Translation Boundary Enforcement ───────────
+    // Strict bypass for numeric/identifier blocks to prevent LLM hallucination
+    const numericRatio = this.calculateNumericRatio(text);
+    const containsCurrency = /[¥￥円]/.test(text) || /\b(JPY|USD)\b/i.test(text);
+    const containsChassisPattern = /[A-Z0-9]+-\d{4,}/.test(text);
+
+    if (numericRatio > 0.4 || containsCurrency || containsChassisPattern) {
+      return {
+        blockId: block.blockId,
+        originalText: text,
+        translatedText: text, // Skip translation
+        confidence: 1.0,
+        tier: 2,
+        method: 'strict_boundary_pass',
+        preservedIdentifiers: [],
+        status: 'ok',
+      };
+    }
+
     // Check cache
     const cacheKey = this.cacheKey(text, context);
     const cached = this.cache.get(cacheKey);
@@ -363,6 +382,13 @@ export class BlockTranslator {
 
   private containsJapanese(text: string): boolean {
     return /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/.test(text);
+  }
+
+  private calculateNumericRatio(text: string): number {
+    const totalChars = text.length;
+    if (totalChars === 0) return 0;
+    const numericChars = (text.match(/[\d,.\-¥￥円]/g) || []).length;
+    return numericChars / totalChars;
   }
 
   private cacheKey(text: string, context: TranslationContext): string {

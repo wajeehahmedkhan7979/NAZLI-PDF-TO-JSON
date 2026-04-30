@@ -19,11 +19,11 @@ export class QualityGateService {
 
     if (confidence < 0.3) {
       nextStatus = 'REJECTED';
-      this.logger.warn(`Document ${documentId} rejected due to extreme low confidence (${confidence})`);
+      this.logger.warn(`Document ${documentId} rejected due to extreme low confidence (${confidence.toFixed(2)})`);
     } 
-    else if (confidence < 0.8 || flags.length > 0) {
+    else if (confidence < 0.85 || flags.length > 0) {
       nextStatus = 'NEEDS_REVIEW';
-      this.logger.log(`Document ${documentId} flagged for review. Confidence: ${confidence}, Flags: ${flags.join(',')}`);
+      this.logger.log(`Document ${documentId} flagged for review. Confidence (${confidence.toFixed(2)}) < 0.85 or Flags present: ${flags.join(',')}`);
     } 
     else {
       nextStatus = 'COMPLETED'; // Auto Accept

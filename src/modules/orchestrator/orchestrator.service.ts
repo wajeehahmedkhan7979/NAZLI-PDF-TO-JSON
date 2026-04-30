@@ -8,11 +8,9 @@ import { BlockTranslator, TranslationContext } from '../translation/block-transl
 import { SchemaMapperService } from '../schema-mapper/schema-mapper.service';
 import { ConfidenceCalculator } from '../validation/confidence-calculator';
 import { PurchaseValidator } from '../validation/validators/purchase.validator';
-import { BillingValidator } from '../validation/validators/billing.validator';
-import { ValidationService } from '../validation/validation.service';
 import { QualityGateService } from '../validation/quality-gate.service';
-import { AuctionSheetProcessor } from '../auction/auction-sheet.processor';
 import { PipelineMetrics } from '../../common/metrics/pipeline-metrics';
+import { ErpAdapterService } from '../schema-mapper/erp-adapter.service';
 
 const prisma = new PrismaClient();
 
@@ -48,11 +46,9 @@ export class OrchestratorService {
     private schemaMapper: SchemaMapperService,
     private confidenceCalc: ConfidenceCalculator,
     private purchaseValidator: PurchaseValidator,
-    private billingValidator: BillingValidator,
-    private validator: ValidationService,
     private qualityGate: QualityGateService,
-    private auctionProcessor: AuctionSheetProcessor,
     private metrics: PipelineMetrics,
+    private erpAdapter: ErpAdapterService,
   ) {}
 
   /**
@@ -89,29 +85,11 @@ export class OrchestratorService {
         await this.audit(documentId, 'classified', 'CLASSIFIED', { timing: timing.classify_ms });
       }
 
-      // ── STEP 2: Route by document type (Strategy Pattern) ──
+      // ── STEP 2: Route ──
       const freshDoc = await prisma.document.findUnique({ where: { id: documentId } });
       const docType = freshDoc?.documentType;
 
-      if (docType === 'AUCTION_SHEET') {
-        // ── AUCTION_SHEET fast-path ──────────────────────────
-        this.logger.log(`[${documentId}] Routing to AuctionSheetProcessor`);
-        const t = Date.now();
-        const result = await this.auctionProcessor.process(documentId);
-        timing.auction_ms = Date.now() - t;
-        this.metrics.recordLatency('latency.auction_ms', timing.auction_ms);
-        await this.audit(documentId, 'auction_processed', 'EXPOSED', {
-          type: result.type,
-          confidence: result.confidence,
-          flags: result.flags,
-          timing,
-        });
-        this.logger.log(`✔ Auction pipeline finished for ${documentId} (confidence: ${result.confidence})`);
-        return;
-      }
-
-      // ── FULL PIPELINE (PURCHASE, BILLING, INVOICE, etc.) ──
-      this.logger.log(`[${documentId}] Routing to full pipeline (type: ${docType})`);
+      this.logger.log(`[${documentId}] Routing to purchase pipeline (type: ${docType})`);
 
       // ── STEP 3: Extraction ─────────────────────────────
       let extractionResult: any = null;
@@ -287,23 +265,38 @@ export class OrchestratorService {
         this.logger.debug(`[${documentId}] → VALIDATE`);
 
         const docData = await prisma.document.findUnique({ where: { id: documentId } });
-        const canonical = docData?.canonicalJson as any;
+        let canonical = docData?.canonicalJson as any;
 
-        // Type-dispatched validation
-        let validationErrors: any[] = [];
-        if (docType === 'PURCHASE' || docType === 'PURCHASE_ORDER') {
-          validationErrors = this.purchaseValidator.validate(canonical);
-        } else if (docType === 'BILLING' || docType === 'INVOICE') {
-          validationErrors = this.billingValidator.validate(canonical);
+        // Strict Purchase Validation (everything is a purchase record list now)
+        const validationErrors = this.purchaseValidator.validate(canonical);
+
+        // Distribution Validation
+        const distributionValidator = new (require('../validation/validators/distribution.validator').DistributionValidator)();
+        const distributionReport = distributionValidator.validate(canonical?.records || []);
+        
+        canonical.distributionReport = distributionReport;
+
+        // Calculate Document-Level Confidence
+        const mappingTrace = canonical?.mappingTrace;
+        let meanRowConfidence = 1.0;
+        if (mappingTrace && mappingTrace.rowTraces && mappingTrace.rowTraces.length > 0) {
+          meanRowConfidence = mappingTrace.rowTraces.reduce((sum: number, r: any) => sum + (r.mappingScores?.overall || 0), 0) / mappingTrace.rowTraces.length;
         }
 
-        // Also run the existing validation service for schema check
-        await this.validator.validateAndMap(documentId, canonical);
+        const totalRows = canonical?.records?.length || 0;
+        const failedMathRows = validationErrors.filter((e: any) => e.rule === 'math_check').length;
+        const mathPassRate = totalRows > 0 ? (totalRows - failedMathRows) / totalRows : 1.0;
+
+        const distributionStability = distributionReport.distributionStability;
+
+        const documentConfidence = (meanRowConfidence * 0.6) + (mathPassRate * 0.2) + (distributionStability * 0.2);
 
         await prisma.document.update({
           where: { id: documentId },
           data: {
+            canonicalJson: canonical,
             validationErrors: validationErrors as any,
+            overallConfidence: documentConfidence,
             stage: 'VALIDATED',
           },
         });
@@ -314,6 +307,8 @@ export class OrchestratorService {
           errorCount: validationErrors.length,
           errors: validationErrors.filter((e: any) => e.severity === 'error').length,
           warnings: validationErrors.filter((e: any) => e.severity === 'warning').length,
+          documentConfidence,
+          distributionStability,
           timing: timing.validate_ms,
         });
       }
@@ -333,10 +328,18 @@ export class OrchestratorService {
         this.logger.log(`[${documentId}] Quality gate → ${finalStatus}`);
       }
 
+      // ── STEP 10: ERP Contract Generation ────────────────
+      const docForErp = await prisma.document.findUnique({ where: { id: documentId } });
+      const canonical = docForErp?.canonicalJson as any;
+      const docConfidence = docForErp?.overallConfidence || 0;
+      
+      const erpPayload = this.erpAdapter.toErpPayload(canonical?.records || [], docConfidence);
+
       // Mark finished
       await prisma.document.update({
         where: { id: documentId },
         data: {
+          erpPayload: erpPayload as any,
           stage: 'EXPOSED',
           processingEnded: new Date(),
         },

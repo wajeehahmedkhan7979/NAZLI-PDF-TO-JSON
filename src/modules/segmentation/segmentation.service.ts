@@ -35,11 +35,12 @@ export class SegmentationService {
 
   /** Signal weights */
   private readonly WEIGHTS = {
-    headerSimilarity: 0.25,
-    identifierMatch: 0.30,
-    layoutSimilarity: 0.15,
-    semanticSectionChange: 0.20,
+    headerSimilarity: 0.20,
+    identifierMatch: 0.25,
+    layoutSimilarity: 0.10,
+    semanticSectionChange: 0.15,
     pageDensityChange: 0.10,
+    columnStructureChange: 0.20, // New signal
   };
 
   /** Base threshold for splitting into a new group */
@@ -137,6 +138,7 @@ export class SegmentationService {
         vendorName: pageCandidates.find((c) => c.fieldType === 'VENDOR')?.value,
         blockTypes: pageBlocks.map((b) => b.blockType),
         containsHardBoundaryKeyword: this.containsHardBoundary(pageBlocks),
+        columnFingerprint: this.buildColumnFingerprint(pageBlocks),
       });
     }
 
@@ -261,6 +263,19 @@ export class SegmentationService {
           pages: [i - 1, i],
           strength: densityChange,
           description: `Content density shift (${prev.blockCount} → ${curr.blockCount} blocks)`,
+        });
+      }
+
+      // Signal 6: Column Fingerprint Similarity
+      const colSim = this.columnFingerprintSimilarity(prev, curr);
+      if (colSim < 0.6) { // High mismatch in column structure
+        const strength = 1 - colSim;
+        weightedScore += strength * this.WEIGHTS.columnStructureChange;
+        signals.push({
+          type: 'column_structure_change',
+          pages: [i - 1, i],
+          strength,
+          description: `Column structure mismatch (similarity: ${colSim.toFixed(2)})`,
         });
       }
 
@@ -484,6 +499,40 @@ export class SegmentationService {
     // Clamp to safe range
     return Math.max(0.35, Math.min(0.85, threshold));
   }
+  private buildColumnFingerprint(blocks: UnderstoodBlock[]): any {
+    const textBlocks = blocks.filter(b => b.blockType === 'TEXT' || b.blockType === 'TABLE');
+    const numBlocks = textBlocks.length;
+    
+    let numericChars = 0;
+    let totalChars = 0;
+    textBlocks.forEach(b => {
+      const text = b.normalizedText;
+      totalChars += text.length;
+      numericChars += (text.match(/\d/g) || []).length;
+    });
+    const numericRatio = totalChars > 0 ? numericChars / totalChars : 0;
+    
+    // Approximate columns by counting distinct X-alignments (binned to ~50px)
+    const xPositions = new Set();
+    blocks.forEach(b => {
+      const bbox = (b as any).metadata?.bbox;
+      if (bbox) xPositions.add(Math.round(bbox[0] / 50) * 50);
+    });
+    
+    return { numBlocks, numericRatio, colCount: xPositions.size };
+  }
+
+  private columnFingerprintSimilarity(prev: PageProfile, curr: PageProfile): number {
+    const f1 = prev.columnFingerprint;
+    const f2 = curr.columnFingerprint;
+    if (!f1 || !f2) return 1.0;
+
+    const blockRatio = Math.min(f1.numBlocks, f2.numBlocks) / Math.max(f1.numBlocks, f2.numBlocks, 1);
+    const numDiff = 1 - Math.abs(f1.numericRatio - f2.numericRatio);
+    const colRatio = Math.min(f1.colCount, f2.colCount) / Math.max(f1.colCount, f2.colCount, 1);
+
+    return (blockRatio * 0.3) + (numDiff * 0.4) + (colRatio * 0.3);
+  }
 }
 
 // ── Internal types ───────────────────────────────────────────
@@ -500,6 +549,11 @@ interface PageProfile {
   vendorName?: string;
   blockTypes: string[];
   containsHardBoundaryKeyword: boolean;
+  columnFingerprint?: {
+    numBlocks: number;
+    numericRatio: number;
+    colCount: number;
+  };
 }
 
 interface BoundaryPoint {

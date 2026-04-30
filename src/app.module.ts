@@ -16,7 +16,6 @@ import { TranslationModule } from './modules/translation/translation.module';
 import { ValidationModule } from './modules/validation/validation.module';
 import { SchemaMapperModule } from './modules/schema-mapper/schema-mapper.module';
 import { DocumentsModule } from './modules/documents/documents.module';
-import { ReviewModule } from './modules/review/review.module';
 import { OrchestratorModule } from './modules/orchestrator/orchestrator.module';
 import { MetricsModule } from './modules/health/metrics.module';
 import { CacheModule } from './common/cache/cache.module';
@@ -66,7 +65,6 @@ import { CacheModule } from './common/cache/cache.module';
     ValidationModule,
     SchemaMapperModule,
     DocumentsModule,
-    ReviewModule,
     OrchestratorModule,
     MetricsModule,
     CacheModule,

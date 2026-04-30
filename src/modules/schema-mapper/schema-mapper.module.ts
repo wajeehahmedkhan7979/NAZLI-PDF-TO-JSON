@@ -1,18 +1,12 @@
 import { Module } from '@nestjs/common';
-import {
-  SchemaMapperService,
-  PurchaseMapper,
-  BillingMapper,
-  AuctionMapper,
-} from './schema-mapper.service';
+import { SchemaMapperService } from './schema-mapper.service';
+import { ErpAdapterService } from './erp-adapter.service';
 
 @Module({
   providers: [
     SchemaMapperService,
-    PurchaseMapper,
-    BillingMapper,
-    AuctionMapper,
+    ErpAdapterService
   ],
-  exports: [SchemaMapperService],
+  exports: [SchemaMapperService, ErpAdapterService],
 })
 export class SchemaMapperModule {}

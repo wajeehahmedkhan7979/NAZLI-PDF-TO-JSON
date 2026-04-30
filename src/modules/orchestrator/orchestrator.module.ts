@@ -10,10 +10,8 @@ import { NormalizationModule } from '../normalization/normalization.module';
 import { TranslationModule } from '../translation/translation.module';
 import { ValidationModule } from '../validation/validation.module';
 import { SchemaMapperModule } from '../schema-mapper/schema-mapper.module';
-import { AuctionModule } from '../auction/auction.module';
 import { ConfidenceCalculator } from '../validation/confidence-calculator';
 import { PurchaseValidator } from '../validation/validators/purchase.validator';
-import { BillingValidator } from '../validation/validators/billing.validator';
 
 @Module({
   imports: [
@@ -26,14 +24,12 @@ import { BillingValidator } from '../validation/validators/billing.validator';
     TranslationModule,
     ValidationModule,
     SchemaMapperModule,
-    AuctionModule,
   ],
   providers: [
     OrchestratorService,
     DocumentPipelineProcessor,
     ConfidenceCalculator,
     PurchaseValidator,
-    BillingValidator,
   ],
   exports: [OrchestratorService],
 })

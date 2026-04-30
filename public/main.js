@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:3000/api/v1/documents';
+const API_URL = 'http://localhost:3000/api/purchase';
 const API_KEY = 'local-dev-key-12345';
 
 // DOM Elements
@@ -121,51 +121,43 @@ async function pollStatus(documentId) {
     
     const interval = setInterval(async () => {
         try {
-            const res = await fetch(`${API_URL}/${documentId}`, {
+            const res = await fetch(`${API_URL}/${documentId}/status`, {
                 headers: { 'x-api-key': API_KEY }
             });
-            const doc = await res.json();
+            const statusData = await res.json();
             
-            updateBadge(doc.stage || doc.status);
-            logStatus(`Polling: stage=${doc.stage}, status=${doc.status}`);
+            updateBadge(statusData.stage || statusData.status);
+            logStatus(`Polling: stage=${statusData.stage}, status=${statusData.status}`);
 
-            // Update viewer natively
-            jsonViewer.innerText = JSON.stringify(doc, null, 2);
-
-            // Once it finishes processing components
-            if (['COMPLETED', 'NEEDS_REVIEW', 'STORED', 'EXPOSED', 'FAILED'].includes(doc.status) || 
-               ['STORED', 'EXPOSED'].includes(doc.stage)) {
+            // Once it finishes processing
+            if (['EXPOSED', 'FAILED'].includes(statusData.stage) || statusData.status === 'FAILED') {
                 clearInterval(interval);
                 processingPulse.classList.add('hidden');
-                logStatus('Processing completed.');
                 
-                // Fetch extractions for detailed viewing
-                try {
-                    const extRes = await fetch(`${API_URL}/${documentId}/extractions`, {
-                        headers: { 'x-api-key': API_KEY }
-                    });
-                    const extractions = await extRes.json();
-                    
-                    const canRes = await fetch(`${API_URL}/${documentId}/canonical`, {
-                        headers: { 'x-api-key': API_KEY }
-                    });
-                    const canonicalJson = await canRes.json();
+                if (statusData.status === 'FAILED') {
+                    logStatus('Processing failed.');
+                    return;
+                }
 
-                    if (canonicalJson && canonicalJson.type === 'AUCTION_SHEET') {
+                logStatus('Processing completed. Fetching results...');
+                
+                // Fetch strict results
+                try {
+                    const resultRes = await fetch(`${API_URL}/${documentId}/result`, {
+                        headers: { 'x-api-key': API_KEY }
+                    });
+                    const result = await resultRes.json();
+                    
+                    jsonViewer.innerText = JSON.stringify(result, null, 2);
+
+                    if (result.records && result.records.length > 0) {
                         jsonViewer.classList.add('hidden');
                         document.getElementById('table-viewer').classList.remove('hidden');
-                        renderTable(canonicalJson.rows);
-                    } else {
-                        jsonViewer.classList.remove('hidden');
-                        document.getElementById('table-viewer').classList.add('hidden');
-                        const finalOutput = {
-                            document: doc,
-                            extractedBlocks: extractions
-                        };
-                        jsonViewer.innerText = JSON.stringify(finalOutput, null, 2);
+                        renderTable(result.records);
                     }
                 } catch(e) {
-                    console.error("Error fetching detailed data", e);
+                    console.error("Error fetching result", e);
+                    logStatus(`Error fetching results: ${e.message}`);
                 }
             }
         } catch (err) {
@@ -204,14 +196,14 @@ function renderTable(rows) {
         tr.innerHTML = `
             <td>${row.date || '-'}</td>
             <td>${row.lotNumber || '-'}</td>
-            <td>${row.carName || '-'}</td>
+            <td>${row.chassis || '-'}</td>
             <td style="font-family: monospace;">${row.chassis || '-'}</td>
-            <td>${row.auctionPlatform || '-'}</td>
-            <td>${row.auctionLocation || '-'}</td>
-            <td class="text-right">${formatMoney(row.startingPrice)}</td>
+            <td>${row.auction || '-'}</td>
+            <td>${row.area || '-'}</td>
+            <td class="text-right">${formatMoney(row.bid)}</td>
             <td class="text-right">${formatMoney(row.auctionFee)}</td>
-            <td class="text-right" style="font-weight: 600">${formatMoney(row.finalPrice)}</td>
-            <td class="${confClass}">${(row.confidence * 100).toFixed(0)}%</td>
+            <td class="text-right" style="font-weight: 600">${formatMoney(row.total)}</td>
+            <td class="${confClass}">${(row.confidence * 100 || 95).toFixed(0)}%</td>
             <td>${flagsHtml}</td>
         `;
         tbody.appendChild(tr);

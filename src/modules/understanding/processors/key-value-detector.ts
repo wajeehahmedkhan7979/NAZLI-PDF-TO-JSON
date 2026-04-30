@@ -86,6 +86,14 @@ export class KeyValueDetector {
       keywords: ['株式会社', '有限会社', '(株)', '（株）'],
       fieldHint: 'VENDOR',
     },
+    {
+      keywords: ['会場', 'オークション'],
+      fieldHint: 'AUCTION',
+    },
+    {
+      keywords: ['地域', '場所', '会場名'],
+      fieldHint: 'AREA',
+    },
   ];
 
   /**
@@ -284,9 +292,13 @@ export class KeyValueDetector {
               detectionMethod: 'keyword_anchor',
             });
           } else if (cleanValue.length < 100) {
+            // For descriptive fields (NAME, BUYER, etc.), don't split by spaces
+            const isDescriptive = ['VEHICLE_NAME', 'BUYER', 'SELLER', 'VENDOR', 'AUCTION', 'AREA'].includes(pattern.fieldHint);
+            const value = isDescriptive ? cleanValue : (cleanValue.split(/\s/)[0] || cleanValue);
+            
             pairs.push({
               label: keyword,
-              value: cleanValue.split(/\s/)[0] || cleanValue, // Take first token
+              value: value,
               sourceBlockId: block.blockId,
               page: block.page,
               labelBbox: block.bbox,

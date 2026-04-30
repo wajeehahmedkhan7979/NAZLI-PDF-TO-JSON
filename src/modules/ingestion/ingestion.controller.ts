@@ -7,7 +7,7 @@ import { UploadResponseDto } from './dto/upload-response.dto';
 import { ApiKeyGuard } from '../../common/guards/api-key.guard';
 
 @ApiTags('Ingestion')
-@Controller('api/v1/documents')
+@Controller('api/purchase')
 @UseGuards(ApiKeyGuard)
 export class IngestionController {
   constructor(private readonly ingestionService: IngestionService) {}

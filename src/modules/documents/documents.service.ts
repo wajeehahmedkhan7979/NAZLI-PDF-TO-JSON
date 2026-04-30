@@ -98,11 +98,21 @@ export class DocumentsService {
    * Get canonical (internal) JSON — for debugging / admin views.
    */
   async getCanonical(documentId: string, tenantId: string) {
+    const doc = await this.getRawDocument(documentId, tenantId);
+    return doc.canonicalJson;
+  }
+
+  async getErpPayload(documentId: string, tenantId: string) {
+    const doc = await this.getRawDocument(documentId, tenantId);
+    return doc.erpPayload || [];
+  }
+
+  async getRawDocument(documentId: string, tenantId: string) {
     const doc = await prisma.document.findFirst({
       where: { id: documentId, tenantId },
     });
     if (!doc) throw new NotFoundException(`Document ${documentId} not found`);
-    return doc.canonicalJson;
+    return doc;
   }
 
   /**

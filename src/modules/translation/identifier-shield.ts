@@ -62,8 +62,8 @@ export class IdentifierShield {
     // Short dates: 04/04 (auction sheets)
     { name: 'DATE_SHORT', pattern: /\b\d{2}\/\d{2}\b/g, priority: 50 },
 
-    // Currency values with symbol: ¥1,234,567 or ￥1,234,567
-    { name: 'CURRENCY', pattern: /[¥￥]\s?[\d,]+/g, priority: 75 },
+    // Currency values with symbol: ¥1,234,567 or ￥1,234,567 or 1,234,567円
+    { name: 'CURRENCY', pattern: /(?:[¥￥]\s?[\d,]+|[\d,]+円)/g, priority: 75 },
 
     // Postal codes: 〒123-4567 (requires 〒 prefix or start-of-word 3-digit block)
     // Must NOT match the middle of a phone number like 03-1234-5678

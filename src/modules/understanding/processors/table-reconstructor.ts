@@ -18,8 +18,9 @@ export class TableReconstructor {
   private readonly logger = new Logger(TableReconstructor.name);
 
   /** Clustering tolerances (pixels) — configurable for different doc types */
-  private readonly ROW_CLUSTER_TOLERANCE = 8;
-  private readonly COL_CLUSTER_TOLERANCE = 15;
+  /** Clustering tolerances (pixels) — relaxed to 12px for better skew handling */
+  private readonly ROW_CLUSTER_TOLERANCE = 12;
+  private readonly COL_CLUSTER_TOLERANCE = 20;
   private readonly MIN_CELLS_PER_ROW = 2;
 
   /**
