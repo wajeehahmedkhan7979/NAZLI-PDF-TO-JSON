@@ -2,8 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { UnderstoodBlock } from '../understanding/interfaces/understanding.interfaces';
 import { IdentifierShield, ShieldedText } from './identifier-shield';
 import { GlossaryService } from './deterministic/glossary.service';
-import { AiTranslationService } from './ai-fallback/ai-translation.service';
-import { LlmBudgetManager } from './llm-budget-manager';
 
 /**
  * TranslationContext — passed with each batch to provide context-awareness.
@@ -67,10 +65,7 @@ export class BlockTranslator {
 
   constructor(
     private identifierShield: IdentifierShield,
-    private glossaryService: GlossaryService,
-    private aiTranslation: AiTranslationService,
-    private budgetManager: LlmBudgetManager,
-  ) {}
+    private glossaryService: GlossaryService) {}
 
   /**
    * Translate a batch of understood blocks with context.
@@ -84,8 +79,6 @@ export class BlockTranslator {
       `Translating batch: ${blocks.length} blocks, type=${context.documentType}, section=${context.section}`,
     );
 
-    // Start LLM budget session
-    this.budgetManager.startSession(documentId);
 
     const results: TranslatedBlock[] = [];
 
@@ -110,14 +103,7 @@ export class BlockTranslator {
       }
     }
 
-    // End budget session
-    const budgetSummary = this.budgetManager.endSession(documentId);
-    if (budgetSummary) {
-      this.logger.log(
-        `Translation complete: ${results.length} blocks, ` +
-          `${budgetSummary.tokensUsed} LLM tokens used, $${budgetSummary.costUsed.toFixed(4)}`,
-      );
-    }
+    this.logger.log(`Translation complete: ${results.length} blocks (deterministic tiers only)`);
 
     return results;
   }
@@ -233,52 +219,10 @@ export class BlockTranslator {
       };
     }
 
-    // ── Tier 3: DeepL / Google Translation API ───────────────
-    // (Placeholder — would call external API)
-    const budget3 = this.budgetManager.canUse(documentId, 3, text.length);
-    if (budget3.allowed) {
-      // For now, pass through to AI fallback as tier 3
-      // In production, this would call DeepL or Google Translate API
-    }
+    // ── Tier 3/4 disabled in primary path ───────────────────
+    // Deterministic production mode: no AI or external translation fallback.
 
-    // ── Tier 4: GPT fallback (budget-controlled) ─────────────
-    const estimatedTokens = Math.ceil(text.length / 2); // rough estimate
-    const budget4 = this.budgetManager.canUse(documentId, 4, estimatedTokens);
-
-    if (budget4.allowed) {
-      try {
-        const aiResult = await this.aiTranslation.invokeFallback({
-          text: shielded.shieldedText,
-          context: `Document type: ${context.documentType}. Section: ${context.section}. ` +
-            `Glossary hints: ${context.glossaryHints.join(', ')}`,
-        });
-
-        this.budgetManager.recordUsage(documentId, estimatedTokens, budget4.model);
-
-        if (aiResult && aiResult.translated) {
-          const translated = this.identifierShield.unshield(
-            aiResult.translated.text || shielded.shieldedText,
-            shielded.tokens,
-          );
-          const confidence = Math.min(aiResult.confidence, 0.85); // Cap AI confidence
-          this.cacheResult(cacheKey, translated, confidence, 4);
-          return {
-            blockId: block.blockId,
-            originalText: text,
-            translatedText: translated,
-            confidence,
-            tier: 4,
-            method: `llm_${budget4.model}`,
-            preservedIdentifiers,
-            status: 'ok',
-          };
-        }
-      } catch (err: any) {
-        this.logger.warn(`AI translation failed for block ${block.blockId}: ${err.message}`);
-      }
-    }
-
-    // ── Fallback: partial translation (glossary fragments + originals) ──
+// ── Fallback: partial translation (glossary fragments + originals) ──
     const partialResult = await this.partialTranslation(text, shielded, context.tenantId);
     return {
       blockId: block.blockId,
