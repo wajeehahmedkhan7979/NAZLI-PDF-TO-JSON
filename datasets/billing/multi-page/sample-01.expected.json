@@ -1,0 +1,24 @@
+{
+  "_meta": {
+    "document_type": "BILLING",
+    "sample_id": "billing-multi-01",
+    "pdf_file": "sample-01.pdf",
+    "notes": "Multi-page billing document"
+  },
+  "fields": {
+    "chassis": null,
+    "vin": null,
+    "invoice_number": "INV-2026-001",
+    "vendor": "株式会社テスト商社",
+    "client": "テスト購入者御中",
+    "total": 1849000,
+    "subtotal": 1680000,
+    "tax": 168000,
+    "date": "2026-04-05"
+  },
+  "tolerances": {
+    "total": 0.01,
+    "subtotal": 0.01,
+    "tax": 0.01
+  }
+}

@@ -12,6 +12,7 @@ import { BillingValidator } from '../validation/validators/billing.validator';
 import { ValidationService } from '../validation/validation.service';
 import { QualityGateService } from '../validation/quality-gate.service';
 import { AuctionSheetProcessor } from '../auction/auction-sheet.processor';
+import { PipelineMetrics } from '../../common/metrics/pipeline-metrics';
 
 const prisma = new PrismaClient();
 
@@ -51,6 +52,7 @@ export class OrchestratorService {
     private validator: ValidationService,
     private qualityGate: QualityGateService,
     private auctionProcessor: AuctionSheetProcessor,
+    private metrics: PipelineMetrics,
   ) {}
 
   /**
@@ -97,6 +99,7 @@ export class OrchestratorService {
         const t = Date.now();
         const result = await this.auctionProcessor.process(documentId);
         timing.auction_ms = Date.now() - t;
+        this.metrics.recordLatency('latency.auction_ms', timing.auction_ms);
         await this.audit(documentId, 'auction_processed', 'EXPOSED', {
           type: result.type,
           confidence: result.confidence,
@@ -117,6 +120,7 @@ export class OrchestratorService {
         this.logger.debug(`[${documentId}] → EXTRACT`);
         extractionResult = await this.extraction.extractStructuredData(documentId);
         timing.extract_ms = Date.now() - t;
+        this.metrics.recordLatency(PipelineMetrics.EXTRACTION_LATENCY, timing.extract_ms);
         await this.audit(documentId, 'extracted', 'EXTRACTED', {
           engine: extractionResult?.engine,
           blockCount: extractionResult?.blocks?.length,
@@ -151,6 +155,7 @@ export class OrchestratorService {
         });
 
         timing.understand_ms = Date.now() - t;
+        this.metrics.recordLatency(PipelineMetrics.UNDERSTANDING_LATENCY, timing.understand_ms);
         await this.audit(documentId, 'understood', 'UNDERSTOOD', {
           blockCount: understandingResult.blocks.length,
           tableCount: understandingResult.tables.length,
@@ -195,6 +200,7 @@ export class OrchestratorService {
         });
 
         timing.segment_ms = Date.now() - t;
+        this.metrics.recordLatency(PipelineMetrics.SEGMENTATION_LATENCY, timing.segment_ms);
         await this.audit(documentId, 'segmented', 'SEGMENTED', {
           groupCount: segmentationResult.groups.length,
           timing: timing.segment_ms,
@@ -233,6 +239,7 @@ export class OrchestratorService {
         });
 
         timing.translate_ms = Date.now() - t;
+        this.metrics.recordLatency(PipelineMetrics.TRANSLATION_LATENCY, timing.translate_ms);
         await this.audit(documentId, 'translated', 'TRANSLATED', {
           blockCount: translatedBlocks.length,
           timing: timing.translate_ms,
@@ -266,6 +273,7 @@ export class OrchestratorService {
         });
 
         timing.map_ms = Date.now() - t;
+        this.metrics.recordLatency('latency.mapping_ms', timing.map_ms);
         await this.audit(documentId, 'mapped', 'NORMALIZED', {
           mappedFields: mappingResult.mappingTrace.fieldMappings.length,
           warnings: mappingResult.mappingTrace.warnings,
@@ -301,6 +309,7 @@ export class OrchestratorService {
         });
 
         timing.validate_ms = Date.now() - t;
+        this.metrics.recordLatency(PipelineMetrics.VALIDATION_LATENCY, timing.validate_ms);
         await this.audit(documentId, 'validated', 'VALIDATED', {
           errorCount: validationErrors.length,
           errors: validationErrors.filter((e: any) => e.severity === 'error').length,
@@ -333,11 +342,13 @@ export class OrchestratorService {
         },
       });
 
+      this.metrics.increment(PipelineMetrics.DOCS_PROCESSED);
       this.logger.log(
         `✔ Pipeline v${this.PIPELINE_VERSION} finished for ${documentId}. Timing: ${JSON.stringify(timing)}`,
       );
     } catch (err: any) {
       this.logger.error(`✘ Pipeline failed for ${documentId}: ${err.message}`, err.stack);
+      this.metrics.increment(PipelineMetrics.DOCS_FAILED);
 
       await prisma.document.update({
         where: { id: documentId },

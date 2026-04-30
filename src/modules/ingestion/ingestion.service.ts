@@ -21,8 +21,18 @@ export class IngestionService {
     private scanner: VirusScannerService,
   ) {}
 
+  private readonly MAX_QUEUE_SIZE = parseInt(process.env.MAX_QUEUE_SIZE || '100', 10);
+
   async processUpload(file: Express.Multer.File, tenantId: string) {
     this.logger.log(`Processing upload for tenant ${tenantId}`);
+
+    // 0. Backpressure Control
+    const counts = await this.pipelineQueue.getJobCounts();
+    const activeAndWaiting = counts.waiting + counts.active;
+    if (activeAndWaiting >= this.MAX_QUEUE_SIZE) {
+      this.logger.warn(`Backpressure activated: Queue at capacity (${activeAndWaiting}/${this.MAX_QUEUE_SIZE})`);
+      throw new BadRequestException('System is under heavy load. Please try again later.');
+    }
 
     // 1. Validation
     await this.fileValidator.validatePdf(file.buffer, file.originalname, file.mimetype);
@@ -82,11 +92,15 @@ export class IngestionService {
       }
     });
 
-    // 7. Dispatch to Queue
+    // 7. Dispatch to Queue with Prioritization
+    // Small files (< 1MB) get Priority 1 (High). Larger get Priority 2 (Low).
+    const priority = file.size < 1024 * 1024 ? 1 : 2;
+
     const job = await this.pipelineQueue.add('process-document', { documentId, tenantId }, {
       jobId: documentId, // ensures job idempotency in BullMQ
       attempts: 3,
-      backoff: { type: 'exponential', delay: 5000 }
+      backoff: { type: 'exponential', delay: 5000 },
+      priority
     });
 
     this.logger.log(`Document ${documentId} queued for processing in job ${job.id}`);

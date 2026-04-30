@@ -1,0 +1,28 @@
+{
+  "_meta": {
+    "document_type": "AUCTION_SHEET",
+    "sample_id": "auction-clean-01",
+    "pdf_file": "sample-01.pdf",
+    "notes": "Clean single-page auction sheet from TAA auction"
+  },
+  "fields": {
+    "chassis": "KSP210-0116561",
+    "vin": null,
+    "vehicle_name": "Vitz",
+    "model_code": "DBA-KSP210",
+    "lot_number": "38713020",
+    "auction_date": "2026-04-05",
+    "venue": "TAA",
+    "total": 1849000,
+    "auction_fee": 55000,
+    "recycle_fee": 18000,
+    "invoice_number": null,
+    "vendor": null,
+    "client": null
+  },
+  "tolerances": {
+    "total": 0.01,
+    "auction_fee": 0.01,
+    "recycle_fee": 0.01
+  }
+}

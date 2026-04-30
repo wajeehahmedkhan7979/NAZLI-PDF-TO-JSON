@@ -46,7 +46,9 @@ export type MarkerErrorType =
   | 'invalid_response'
   | 'empty_extraction'
   | 'low_confidence'
-  | 'unknown';
+  | 'unknown'
+  | 'capacity_reached'
+  | 'file_too_large';
 
 export class MarkerError extends Error {
   constructor(
@@ -61,7 +63,8 @@ export class MarkerError extends Error {
 @Injectable()
 export class MarkerClient {
   private readonly logger = new Logger(MarkerClient.name);
-  private readonly baseUrl: string;
+  private readonly baseUrls: string[];
+  private currentUrlIndex = 0;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly circuitBreaker: CircuitBreaker;
@@ -73,8 +76,18 @@ export class MarkerClient {
   };
   private readonly healthCacheTtlMs = 10_000; // cache health for 10s
 
+  // Concurrency and Size limits
+  private activeRequests = 0;
+  private readonly maxConcurrentRequests = 4;
+  private readonly maxFileSize = 20 * 1024 * 1024; // 20 MB
+
   constructor(private config: ConfigService) {
-    this.baseUrl = this.config.get<string>('marker.url') || this.config.get<string>('MARKER_SIDECAR_URL', 'http://localhost:8001');
+    const urlConfig = this.config.get<string>('marker.url') || this.config.get<string>('MARKER_SIDECAR_URL', 'http://localhost:8001');
+    this.baseUrls = urlConfig.split(',').map(u => u.trim()).filter(u => u.length > 0);
+    if (this.baseUrls.length === 0) {
+      this.baseUrls.push('http://localhost:8001');
+    }
+
     this.timeoutMs = this.config.get<number>('marker.timeoutMs') || this.config.get<number>('MARKER_TIMEOUT_MS', 120000);
     this.maxRetries = this.config.get<number>('marker.maxRetries') || this.config.get<number>('MARKER_MAX_RETRIES', 2);
 
@@ -90,6 +103,15 @@ export class MarkerClient {
   }
 
   /**
+   * Get the next available Marker URL using round-robin.
+   */
+  private getNextUrl(): string {
+    const url = this.baseUrls[this.currentUrlIndex];
+    this.currentUrlIndex = (this.currentUrlIndex + 1) % this.baseUrls.length;
+    return url;
+  }
+
+  /**
    * Convert a PDF to Marker's JSON block tree.
    * Returns null on failure (caller should fallback to legacy).
    * Throws MarkerError with classification for observability.
@@ -98,38 +120,49 @@ export class MarkerClient {
     filePath: string,
     options: MarkerConvertOptions = {},
   ): Promise<MarkerConvertResponse | null> {
+    if (this.activeRequests >= this.maxConcurrentRequests) {
+      this.logger.warn(`Marker capacity reached (${this.activeRequests}/${this.maxConcurrentRequests})`);
+      // Fail fast to allow fallback or retry later
+      return null;
+    }
+
     return this.withRetry(async () => {
       return this.circuitBreaker.execute(async () => {
-        const formData = await this.buildFormData(filePath, options);
-        const url = `${this.baseUrl}/convert`;
-
-        this.logger.debug(`POST ${url} (file: ${path.basename(filePath)})`);
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-
+        this.activeRequests++;
         try {
-          const response = await fetch(url, {
-            method: 'POST',
-            body: formData,
-            signal: controller.signal,
-          });
+          const formData = await this.buildFormData(filePath, options);
+          const url = `${this.getNextUrl()}/convert`;
 
-          if (!response.ok) {
-            const errorText = await response.text();
-            this.logger.error(`Marker returned ${response.status}: ${errorText}`);
-            throw new MarkerError('invalid_response', `Marker HTTP ${response.status}: ${errorText}`);
-          }
+          this.logger.debug(`POST ${url} (file: ${path.basename(filePath)})`);
 
-          return (await response.json()) as MarkerConvertResponse;
-        } catch (err: any) {
-          if (err instanceof MarkerError) throw err;
-          if (err.name === 'AbortError') {
-            throw new MarkerError('timeout', `Marker request timed out (${this.timeoutMs}ms)`);
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+
+          try {
+            const response = await fetch(url, {
+              method: 'POST',
+              body: formData,
+              signal: controller.signal,
+            });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              this.logger.error(`Marker returned ${response.status}: ${errorText}`);
+              throw new MarkerError('invalid_response', `Marker HTTP ${response.status}: ${errorText}`);
+            }
+
+            return (await response.json()) as MarkerConvertResponse;
+          } catch (err: any) {
+            if (err instanceof MarkerError) throw err;
+            if (err.name === 'AbortError') {
+              throw new MarkerError('timeout', `Marker request timed out (${this.timeoutMs}ms)`);
+            }
+            throw new MarkerError('unavailable', `Marker unreachable: ${err.message}`);
+          } finally {
+            clearTimeout(timeout);
           }
-          throw new MarkerError('unavailable', `Marker unreachable: ${err.message}`);
         } finally {
-          clearTimeout(timeout);
+          this.activeRequests--;
         }
       });
     });
@@ -142,35 +175,45 @@ export class MarkerClient {
     filePath: string,
     options: { forceOcr?: boolean; useLlm?: boolean } = {},
   ): Promise<MarkerTableResponse | null> {
+    if (this.activeRequests >= this.maxConcurrentRequests) {
+      this.logger.warn(`Marker tables capacity reached (${this.activeRequests}/${this.maxConcurrentRequests})`);
+      return null;
+    }
+
     return this.withRetry(async () => {
       return this.circuitBreaker.execute(async () => {
-        const formData = await this.buildFormData(filePath, options);
-        const url = `${this.baseUrl}/convert/tables`;
-
-        this.logger.debug(`POST ${url} (tables only)`);
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-
+        this.activeRequests++;
         try {
-          const response = await fetch(url, {
-            method: 'POST',
-            body: formData,
-            signal: controller.signal,
-          });
+          const formData = await this.buildFormData(filePath, options);
+          const url = `${this.getNextUrl()}/convert/tables`;
 
-          if (!response.ok) {
-            throw new MarkerError('invalid_response', `Tables endpoint returned ${response.status}`);
+          this.logger.debug(`POST ${url} (tables only)`);
+
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+
+          try {
+            const response = await fetch(url, {
+              method: 'POST',
+              body: formData,
+              signal: controller.signal,
+            });
+
+            if (!response.ok) {
+              throw new MarkerError('invalid_response', `Tables endpoint returned ${response.status}`);
+            }
+            return (await response.json()) as MarkerTableResponse;
+          } catch (err: any) {
+            if (err instanceof MarkerError) throw err;
+            if (err.name === 'AbortError') {
+              throw new MarkerError('timeout', `Tables request timed out`);
+            }
+            throw new MarkerError('unavailable', `Tables endpoint unreachable: ${err.message}`);
+          } finally {
+            clearTimeout(timeout);
           }
-          return (await response.json()) as MarkerTableResponse;
-        } catch (err: any) {
-          if (err instanceof MarkerError) throw err;
-          if (err.name === 'AbortError') {
-            throw new MarkerError('timeout', `Tables request timed out`);
-          }
-          throw new MarkerError('unavailable', `Tables endpoint unreachable: ${err.message}`);
         } finally {
-          clearTimeout(timeout);
+          this.activeRequests--;
         }
       });
     });
@@ -198,7 +241,9 @@ export class MarkerClient {
       const timeout = setTimeout(() => controller.abort(), 5000);
 
       try {
-        const response = await fetch(`${this.baseUrl}/health`, {
+        // Just ping the next URL to check cluster health
+        const url = `${this.getNextUrl()}/health`;
+        const response = await fetch(url, {
           signal: controller.signal,
         });
 
@@ -234,6 +279,11 @@ export class MarkerClient {
     filePath: string,
     options: MarkerConvertOptions,
   ): Promise<FormData> {
+    const stats = await fs.promises.stat(filePath);
+    if (stats.size > this.maxFileSize) {
+      throw new MarkerError('file_too_large', `File size ${stats.size} exceeds maximum ${this.maxFileSize}`);
+    }
+
     const fileBuffer = await fs.promises.readFile(filePath);
     const blob = new Blob([fileBuffer], { type: 'application/pdf' });
     const filename = path.basename(filePath);
